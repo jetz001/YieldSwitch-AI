@@ -2,7 +2,7 @@
 
 import SidebarLayout from '@/components/SidebarLayout';
 import { useState, useEffect } from 'react';
-import { Shield, Eye, RefreshCw, Lock, HardDrive, CheckCircle, AlertCircle } from 'lucide-react';
+import { Shield, Eye, RefreshCw, Lock, HardDrive, CheckCircle, AlertCircle, Zap } from 'lucide-react';
 
 export default function ApiVault() {
   const [loading, setLoading] = useState(true);
@@ -15,6 +15,9 @@ export default function ApiVault() {
     bitgetApiKey: '',
     bitgetApiSecret: '',
     bitgetPassphrase: '',
+    bitgetDemoApiKey: '',
+    bitgetDemoApiSecret: '',
+    bitgetDemoPassphrase: '',
     aiApiKey: '',
     aiProvider: 'OPENAI',
     aiModel: 'gpt-4o'
@@ -22,6 +25,8 @@ export default function ApiVault() {
 
   const [showAiKey, setShowAiKey] = useState(false);
   const [showBitgetKeys, setShowBitgetKeys] = useState(false);
+  const [showPassphrase, setShowPassphrase] = useState(false);
+  const [showDemoKeys, setShowDemoKeys] = useState(false);
 
   useEffect(() => {
     fetchConfig();
@@ -32,7 +37,7 @@ export default function ApiVault() {
       const res = await fetch('/api/users/me');
       const data = await res.json();
       if (res.ok) {
-        setForm(data);
+        setForm(prev => ({ ...prev, ...data }));
         if (data.aiApiKey) setStatus(s => ({ ...s, ai: 'verified' }));
         if (data.bitgetApiKey) setStatus(s => ({ ...s, bitget: 'verified' }));
       }
@@ -45,7 +50,6 @@ export default function ApiVault() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    console.log('Attempting to save form:', form);
     setSaving(true);
     try {
       const res = await fetch('/api/users/me', {
@@ -93,23 +97,31 @@ export default function ApiVault() {
     }
   };
 
-  const testBitget = async () => {
+  const testBitget = async (isDemo = false) => {
     setTestingBitget(true);
     setStatus(s => ({ ...s, bitget: 'testing' }));
     try {
+      const payload = isDemo ? {
+        bitgetDemoApiKey: form.bitgetDemoApiKey,
+        bitgetDemoApiSecret: form.bitgetDemoApiSecret,
+        bitgetDemoPassphrase: form.bitgetDemoPassphrase,
+        isDemo: true
+      } : {
+        bitgetApiKey: form.bitgetApiKey,
+        bitgetApiSecret: form.bitgetApiSecret,
+        bitgetPassphrase: form.bitgetPassphrase,
+        isDemo: false
+      };
+
       const res = await fetch('/api/test/bitget', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          bitgetApiKey: form.bitgetApiKey, 
-          bitgetApiSecret: form.bitgetApiSecret, 
-          bitgetPassphrase: form.bitgetPassphrase 
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (res.ok && data.success) {
         setStatus(s => ({ ...s, bitget: 'verified' }));
-        alert(`${data.message}\nยอดเงินปัจจุบัน: ${data.balance} USDT`);
+        alert(`${isDemo ? 'DEMO' : 'LIVE'} ${data.message}\nยอดเงินปัจจุบัน: ${data.balance} USDT`);
       } else {
         setStatus(s => ({ ...s, bitget: 'failed' }));
         alert(data.message);
@@ -126,183 +138,223 @@ export default function ApiVault() {
 
   return (
     <SidebarLayout>
-      <div className="max-w-4xl">
+      <div className="max-w-5xl">
         <div className="mb-8">
-          <h1 className="text-3xl font-light text-white mb-2 decoration-teal-500 font-thai">คลังเก็บบัญชีนิรภัย: สร้างคีย์ของคุณเอง</h1>
-          <p className="text-slate-400 font-thai">เงินทุนของคุณสมควรได้รับความเป็นส่วนตัวขั้นสูงสุด เราไม่จัดเก็บคีย์ดิบของคุณ ข้อมูลจะถูกเข้ารหัสก่อนบันทึก และจะคงอยู่เฉพาะในเซิร์ฟเวอร์แบบหน่วยความจำเท่านั้นระหว่างการเทรด</p>
+          <h1 className="text-3xl font-light text-white mb-2 decoration-teal-500 font-thai">คลังเก็บบัญชีนิรภัย (API Vault)</h1>
+          <p className="text-slate-400 font-thai">เราใช้การเข้ารหัส AES-256-GCM เพื่อปกป้อง API Key ของคุณ ข้อมูลจะถูกใช้งานเฉพาะในระหว่างกระบวนการเทรดเท่านั้น</p>
         </div>
 
         <div className="flex gap-4 mb-8">
           <div className="flex items-center gap-2 bg-green-900/30 text-green-400 border border-green-800/50 px-3 py-1.5 rounded text-[10px] font-bold tracking-widest uppercase">
-            <Shield size={14} /> เข้ารหัสระดับทหาร AES-256
+            <Shield size={14} /> เข้ารหัส AES-256 แบบปกปิดสมบูรณ์
           </div>
           <div className="flex items-center gap-2 bg-blue-900/30 text-blue-400 border border-blue-800/50 px-3 py-1.5 rounded text-[10px] font-bold tracking-widest uppercase">
-            <HardDrive size={14} /> ทำงานบนหน่วยความจำชั่วคราวเท่านั้น
+            <HardDrive size={14} /> ทำงานบน RAM ชั่วคราว (Zero-Log)
           </div>
         </div>
 
-        <form onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-8">
-          {/* Bitget Configuration */}
-          <div className="col-span-3 bg-[#111827] border border-teal-900/50 rounded-xl p-6 relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-teal-500/50"></div>
+        <form onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Main Bitget Column */}
+          <div className="lg:col-span-8 space-y-6">
             
-            <div className="flex justify-between items-start mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-white mb-1 font-thai">ตั้งค่าเชื่อมต่อ Bitget (V2)</h2>
-                <p className="text-sm text-slate-400 italic font-thai">เชื่อมต่อศูนย์กลางสภาพคล่องของคุณ</p>
-              </div>
-              <div className="bg-slate-800 text-slate-300 text-[10px] uppercase px-2 py-1 rounded font-bold tracking-wider">ความปลอดภัยชั้นที่ 2</div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">Bitget API KEY</label>
-                <div className="relative">
-                  <input 
-                    type={showBitgetKeys ? "text" : "password"}
-                    value={form.bitgetApiKey}
-                    onChange={e => setForm({...form, bitgetApiKey: e.target.value})}
-                    onFocus={e => e.target.value.includes('•') && setForm({...form, bitgetApiKey: ''})}
-                    className="w-full bg-[#0b1121] border border-slate-800 rounded px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-teal-500 pr-10"
-                  />
-                  <Eye 
-                    className={`absolute right-3 top-3.5 cursor-pointer transition-colors ${showBitgetKeys ? 'text-teal-400' : 'text-slate-500 hover:text-slate-300'}`} 
-                    size={16} 
-                    onClick={() => setShowBitgetKeys(!showBitgetKeys)}
-                  />
+            {/* Live Trading Section */}
+            <div className="bg-[#111827] border border-teal-500/30 rounded-2xl p-6 relative overflow-hidden shadow-2xl">
+              <div className="absolute top-0 left-0 w-full h-1 bg-teal-500/50"></div>
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-white mb-1 font-thai">ตั้งค่าบัญชีจริง (Live Trading)</h2>
+                  <p className="text-xs text-teal-500 italic font-thai uppercase tracking-tighter">Bitget V2 - Main Account Credentials</p>
+                </div>
+                <div className="bg-teal-500/10 text-teal-400 text-[10px] uppercase px-3 py-1 rounded-full font-bold border border-teal-500/30 flex items-center gap-1">
+                  <Zap size={10} /> แนะนำสำหรับการรันจริง
                 </div>
               </div>
-              <div>
-                <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">Bitget API SECRET</label>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Live API Key</label>
+                  <div className="relative">
+                    <input 
+                      type={showBitgetKeys ? "text" : "password"}
+                      value={form.bitgetApiKey}
+                      onChange={e => setForm({...form, bitgetApiKey: e.target.value})}
+                      className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-teal-500 pr-10"
+                    />
+                    <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showBitgetKeys ? 'text-teal-400' : 'text-slate-600'}`} size={16} onClick={() => setShowBitgetKeys(!showBitgetKeys)} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Live Secret Key</label>
+                  <div className="relative">
+                    <input 
+                      type={showBitgetKeys ? "text" : "password"}
+                      value={form.bitgetApiSecret}
+                      onChange={e => setForm({...form, bitgetApiSecret: e.target.value})}
+                      className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-teal-500 pr-10"
+                    />
+                    <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showBitgetKeys ? 'text-teal-400' : 'text-slate-600'}`} size={16} onClick={() => setShowBitgetKeys(!showBitgetKeys)} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Live Passphrase</label>
                 <div className="relative">
                   <input 
-                    type={showBitgetKeys ? "text" : "password"}
-                    value={form.bitgetApiSecret}
-                    onChange={e => setForm({...form, bitgetApiSecret: e.target.value})}
-                    onFocus={e => e.target.value.includes('•') && setForm({...form, bitgetApiSecret: ''})}
-                    className="w-full bg-[#0b1121] border border-slate-800 rounded px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-teal-500 pr-10"
+                    type={showPassphrase ? "text" : "password"}
+                    value={form.bitgetPassphrase}
+                    onChange={e => setForm({...form, bitgetPassphrase: e.target.value})}
+                    className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-teal-500 pr-10"
                   />
-                  <Eye 
-                    className={`absolute right-3 top-3.5 cursor-pointer transition-colors ${showBitgetKeys ? 'text-teal-400' : 'text-slate-500 hover:text-slate-300'}`} 
-                    size={16} 
-                    onClick={() => setShowBitgetKeys(!showBitgetKeys)}
+                  <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showPassphrase ? 'text-teal-400' : 'text-slate-600'}`} size={16} onClick={() => setShowPassphrase(!showPassphrase)} />
+                </div>
+              </div>
+              
+              <div className="flex gap-2">
+                <button 
+                  type="button" onClick={() => testBitget(false)} disabled={testingBitget}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[10px] uppercase font-bold tracking-widest flex items-center justify-center gap-2 transition-all border border-slate-700/50"
+                >
+                  {testingBitget ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                  ทดสอบบัญชีจริง
+                </button>
+                <button 
+                  type="button" onClick={() => testBitget(true)} disabled={testingBitget}
+                  className="flex-1 py-2.5 bg-orange-900/20 hover:bg-orange-900/40 text-orange-400 rounded-xl text-[10px] uppercase font-bold tracking-widest flex items-center justify-center gap-2 transition-all border border-orange-800/30"
+                >
+                  {testingBitget ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  ทดสอบ Demo
+                </button>
+              </div>
+            </div>
+
+            {/* Native Demo Trading Section */}
+            <div className="bg-[#111827] border border-orange-500/20 rounded-2xl p-6 relative overflow-hidden shadow-2xl">
+              <div className="absolute top-0 left-0 w-full h-1 bg-orange-500/30"></div>
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h2 className="text-xl font-bold text-white mb-1 font-thai text-orange-400">โหมดจำลองจริง (Bitget Demo)</h2>
+                  <p className="text-[10px] text-slate-500 italic font-thai uppercase tracking-tighter">Real-Market Virtual Environment Support</p>
+                </div>
+                <div className="bg-orange-500/10 text-orange-400 text-[10px] uppercase px-3 py-1 rounded-full font-bold border border-orange-500/20">
+                  Paper Trading V2
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Demo API Key</label>
+                  <div className="relative">
+                    <input 
+                      type={showDemoKeys ? "text" : "password"}
+                      value={form.bitgetDemoApiKey}
+                      onChange={e => setForm({...form, bitgetDemoApiKey: e.target.value})}
+                      className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-400 focus:outline-none focus:border-orange-500 pr-10"
+                    />
+                    <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? 'text-orange-400' : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Demo Secret Key</label>
+                  <div className="relative">
+                    <input 
+                      type={showDemoKeys ? "text" : "password"}
+                      value={form.bitgetDemoApiSecret}
+                      onChange={e => setForm({...form, bitgetDemoApiSecret: e.target.value})}
+                      className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-400 focus:outline-none focus:border-orange-500 pr-10"
+                    />
+                    <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? 'text-orange-400' : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Demo Passphrase</label>
+                <div className="relative">
+                  <input 
+                    type={showDemoKeys ? "text" : "password"}
+                    value={form.bitgetDemoPassphrase}
+                    onChange={e => setForm({...form, bitgetDemoPassphrase: e.target.value})}
+                    className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-400 focus:outline-none focus:border-orange-500 pr-10"
                   />
+                  <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? 'text-orange-400' : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
                 </div>
               </div>
             </div>
-
-            <div className="mb-6">
-              <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">PASSPHRASE</label>
-              <input 
-                type="password"
-                value={form.bitgetPassphrase}
-                onChange={e => setForm({...form, bitgetPassphrase: e.target.value})}
-                placeholder="รหัสผ่านเชื่อมต่อของ API Bitget" 
-                className="w-full bg-[#0b1121] border border-slate-800 rounded px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-teal-500" 
-              />
-            </div>
-
-            <div className="flex bg-[#0b1121] border border-slate-800 rounded mb-4">
-              <div className="flex-1 px-4 py-3 flex items-center gap-3 text-amber-500 border-r border-slate-800">
-                <Lock size={16} />
-                <span className="text-[10px] font-thai uppercase tracking-tighter">คีย์ทั้งหมดจะถูกเข้ารหัสก่อนบันทึกลงฐานข้อมูล</span>
-              </div>
-              <button 
-                type="button"
-                onClick={testBitget}
-                disabled={testingBitget}
-                className="px-6 py-3 text-slate-300 hover:text-white hover:bg-slate-800 font-bold text-[10px] tracking-wide uppercase flex items-center gap-2 transition-colors"
-              >
-                ทดสอบเชื่อมต่อ <RefreshCw size={14} className={testingBitget ? 'animate-spin' : ''} />
-              </button>
-            </div>
-
-            <button 
-              type="submit"
-              disabled={saving}
-              className="w-full py-4 bg-teal-500 hover:bg-teal-400 text-[#111827] font-bold rounded-xl transition-all font-thai text-sm uppercase tracking-widest"
-            >
-              {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่าทั้งหมด'}
-            </button>
           </div>
 
-          {/* AI Configuration */}
-          <div className="col-span-2 space-y-6">
-            <div className="bg-[#1e2336] border border-slate-700 rounded-xl p-6">
+          {/* AI Settings Column */}
+          <div className="lg:col-span-4 space-y-6">
+            <div className="bg-[#1e2336] border border-slate-700 rounded-2xl p-6 shadow-2xl">
               <h2 className="text-xl font-bold text-white mb-6 font-thai">ผู้ให้บริการ AI อัจฉริยะ</h2>
               
               <div className="mb-4">
-                <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">เลือกระบบผู้ให้บริการ (LLM)</label>
+                <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">LLM Provider</label>
                 <select 
                   value={form.aiProvider}
                   onChange={e => setForm({...form, aiProvider: e.target.value})}
-                  className="w-full bg-[#111827] border border-slate-700 rounded px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-slate-500"
+                  className="w-full bg-[#111827] border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
                 >
-                  <option value="OPENAI">OpenAI (GPT-4o)</option>
-                  <option value="OPENROUTER">OpenRouter (Kimi 2.5 / DeepSeek)</option>
+                  <option value="OPENAI">OpenAI (Original)</option>
+                  <option value="OPENROUTER">OpenRouter (Global)</option>
                 </select>
               </div>
 
               <div className="mb-4">
-                <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">เลือกโมเดล (Model)</label>
+                <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">AI Model</label>
                 <select 
                   value={form.aiModel}
                   onChange={e => setForm({...form, aiModel: e.target.value})}
-                  className="w-full bg-[#111827] border border-slate-700 rounded px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-slate-500"
+                  className="w-full bg-[#111827] border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
                 >
                   {form.aiProvider === 'OPENAI' ? (
                     <>
-                      <option value="gpt-4o">GPT-4o (Standard)</option>
+                      <option value="gpt-4o">GPT-4o</option>
                       <option value="gpt-4-turbo">GPT-4 Turbo</option>
                     </>
                   ) : (
                     <>
-                      <option value="moonshotai/kimi-2.5">Kimi 2.5 (OpenRouter)</option>
+                      <option value="moonshotai/kimi-2.5">Kimi 2.5</option>
                       <option value="deepseek/deepseek-chat">DeepSeek Chat</option>
                     </>
                   )}
                 </select>
               </div>
 
-              <div className="mb-6">
-                <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">ตั้งค่า API KEY ของ AI</label>
+              <div className="mb-8">
+                <label className="block text-[10px] text-slate-400 uppercase tracking-widest font-bold mb-2">AI API Key</label>
                 <div className="relative">
                   <input 
                     type={showAiKey ? "text" : "password"}
                     value={form.aiApiKey}
                     onChange={e => setForm({...form, aiApiKey: e.target.value})}
-                    onFocus={e => e.target.value.includes('•') && setForm({...form, aiApiKey: ''})}
-                    placeholder="sk-..." 
-                    className="w-full bg-[#111827] border border-slate-700 rounded px-4 py-3 text-sm text-slate-300 pr-10 focus:outline-none focus:border-teal-500" 
+                    className="w-full bg-[#111827] border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-300 pr-10 focus:outline-none focus:border-teal-500" 
                   />
-                  <Eye 
-                    className={`absolute right-3 top-3.5 cursor-pointer transition-colors ${showAiKey ? 'text-teal-400' : 'text-slate-500 hover:text-slate-300'}`} 
-                    size={16} 
-                    onClick={() => setShowAiKey(!showAiKey)}
-                  />
+                  <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showAiKey ? 'text-teal-400' : 'text-slate-600'}`} size={16} onClick={() => setShowAiKey(!showAiKey)} />
                 </div>
               </div>
 
-              <div className="flex gap-4">
-                <div className={`flex items-center gap-2 border px-3 py-2 rounded text-[10px] font-bold tracking-wider ${status.ai === 'verified' ? 'bg-green-900/30 text-green-400 border-green-800/50' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
+              <div className="space-y-3">
+                <div className={`flex items-center gap-2 border px-3 py-3 rounded-xl text-[10px] font-bold tracking-wider ${status.ai === 'verified' ? 'bg-green-900/30 text-green-400 border-green-800/50' : 'bg-slate-800 text-slate-400 border-slate-700'}`}>
                   {status.ai === 'verified' ? <CheckCircle size={14} /> : <AlertCircle size={14} />}
-                  {status.ai === 'verified' ? 'ยืนยันแล้ว' : 'ยังไม่ถูกตรวจสอบ'}
+                  {status.ai === 'verified' ? 'AI STATUS: VERIFIED' : 'AI STATUS: UNVERIFIED'}
                 </div>
-                <button 
-                  type="button"
-                  onClick={testAi}
-                  disabled={testingAi}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 rounded text-[10px] tracking-wider uppercase transition-colors flex items-center justify-center gap-2"
-                >
-                  {testingAi ? 'Checking...' : 'ทดสอบเชื่อมต่อ'}
+                <button type="button" onClick={testAi} disabled={testingAi} className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-3 rounded-xl text-[10px] tracking-widest uppercase transition-all">
+                  {testingAi ? 'TESTING...' : 'ทดสอบคู่สาย AI'}
                 </button>
               </div>
             </div>
 
-            <div className="bg-slate-800/20 border border-slate-700/50 p-4 rounded-xl">
-              <p className="text-[11px] text-slate-500 leading-relaxed font-thai italic">
-                * สำหรับ OpenRouter กรุณาใช้ URL https://openrouter.ai/api/v1 (จัดการโดยระบบอัตโนมัติ) และรองรับ Kimi 2.5 ของ Moonshot AI
-              </p>
+            <button 
+              type="submit"
+              disabled={saving}
+              className="w-full py-5 bg-teal-500 hover:bg-teal-400 text-[#111827] font-extrabold rounded-2xl transition-all font-thai text-sm uppercase tracking-[0.2em] shadow-lg shadow-teal-500/20"
+            >
+              {saving ? 'กำลังบันทึก (ENCRYPTING...)' : 'บันทึกข้อมูลและล็อคห้องเก็บบัญชี'}
+            </button>
+            <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl flex gap-3 text-amber-500/70 items-start">
+               <Lock className="shrink-0 mt-0.5" size={14}/>
+               <p className="text-[10px] leading-relaxed font-thai">คีย์ของคุณจะถูกเข้ารหัสระดับทหารก่อนบันทึก เราไม่สามารถอ่านพาสเวิร์ดได้หากไม่มีรหัสถอดรหัส (Encryption Key) ส่วนตัวที่รันเฉพาะในหน่วยความจำเซิร์ฟเวอร์เท่านั้น</p>
             </div>
           </div>
         </form>

@@ -1,4 +1,6 @@
 import { runCognitiveLoop } from './aiCognitiveLoop';
+import { executeStrategy } from './executionGuard';
+import { getBitgetClient } from '../services/bitget';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -31,8 +33,35 @@ export async function startEngine(botConfigId) {
           break;
         }
 
-        // Run one cycle
-        await runCognitiveLoop(botConfigId);
+        // Run AI Planning cycle
+        const cycleResult = await runCognitiveLoop(botConfigId);
+        
+        if (cycleResult && cycleResult.status === 'SUCCESS' && cycleResult.aiTasks) {
+          // Fetch full config for API keys
+          const fullConfig = await prisma.botConfig.findUnique({ 
+            where: { id: botConfigId },
+            include: { User: true }
+          });
+
+          if (fullConfig && fullConfig.User) {
+            // Determine which keys to use
+            let bitgetSpot, bitgetFutures;
+            
+            // If in Paper Mode and Demo Keys are provided -> Use Bitget Native Demo
+            if (fullConfig.isPaperTrading && fullConfig.User.bitgetDemoApiKey) {
+              console.log(`[Engine] Using Bitget NATIVE DEMO for bot ${botConfigId}`);
+              bitgetSpot = getBitgetClient(fullConfig.User.bitgetDemoApiKey, fullConfig.User.bitgetDemoApiSecret, fullConfig.User.bitgetDemoPassphrase, true);
+              bitgetFutures = getBitgetClient(fullConfig.User.bitgetDemoApiKey, fullConfig.User.bitgetDemoApiSecret, fullConfig.User.bitgetDemoPassphrase, true);
+            } else {
+              // Otherwise use Live Keys (which might still run in Shadow Mode inside executionGuard if isPaperTrading is true)
+              bitgetSpot = getBitgetClient(fullConfig.User.bitgetApiKey, fullConfig.User.bitgetApiSecret, fullConfig.User.bitgetPassphrase, false);
+              bitgetFutures = getBitgetClient(fullConfig.User.bitgetApiKey, fullConfig.User.bitgetApiSecret, fullConfig.User.bitgetPassphrase, false);
+            }
+            
+            // Execute the plan
+            await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId);
+          }
+        }
 
         // Sleep for 1 minute (or adjust based on strategy)
         // For dev, let's do 30 seconds for better visibility
@@ -48,6 +77,26 @@ export async function startEngine(botConfigId) {
 
   activeLoops.set(botConfigId, true);
   loop(); // Start non-blocking
+}
+
+/**
+ * Initializes and resumes all active bots from the database.
+ * Call this on server startup or first request.
+ */
+export async function initEngine() {
+  try {
+    const activeConfigs = await prisma.botConfig.findMany({
+      where: { isActive: true },
+      select: { id: true }
+    });
+
+    console.log(`[Engine] Resuming ${activeConfigs.length} active bots...`);
+    for (const config of activeConfigs) {
+      startEngine(config.id);
+    }
+  } catch (error) {
+    console.error('[Engine] Failed to initialize active bots:', error);
+  }
 }
 
 /**

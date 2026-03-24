@@ -14,7 +14,11 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       const { symbol, side, amount, strategy, confidence } = task;
 
       // 1. Shadow Mode Hub (Paper Trading)
-      if (config.isPaperTrading || confidence < 70 || strategy === 'SHADOW_TRADE') {
+      // Check if we have native demo keys. If so, we bypass shadow mode and do real execution on Demo.
+      const user = await prisma.user.findUnique({ where: { id: config.userId } });
+      const hasNativeDemo = config.isPaperTrading && !!user.bitgetDemoApiKey;
+
+      if ((config.isPaperTrading && !hasNativeDemo) || confidence < 70 || strategy === 'SHADOW_TRADE') {
         const ticker = await (engineClientSpot || engineClientFutures).fetchTicker(symbol);
         const entryPrice = side === 'buy' ? ticker.ask : ticker.bid;
 
@@ -36,7 +40,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
           data: {
             botConfigId,
             step: 'IMPLEMENT',
-            content: `[PAPER TRADE] บันทึกคำสั่ง ${side.toUpperCase()} ${symbol} ที่ราคา ${entryPrice} (Shadow Mode)`,
+            content: `[SHADOW TRADE] บันทึกคำสั่ง ${side.toUpperCase()} ${symbol} ที่ราคา ${entryPrice} (Simulation)`,
             status: 'SUCCESS'
           }
         });

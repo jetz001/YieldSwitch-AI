@@ -13,7 +13,7 @@ export async function POST(req) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { isActive, isPaperTrading } = await req.json();
+    const { isActive, isPaperTrading, aiDirectives, targetProfitUsdt, allocatedPortfolioUsdt } = await req.json();
 
     // Validation for starting Autopilot
     if (isActive === true) {
@@ -33,7 +33,10 @@ export async function POST(req) {
       where: { userId: session.user.id },
       data: {
         isActive: isActive !== undefined ? isActive : undefined,
-        isPaperTrading: isPaperTrading !== undefined ? isPaperTrading : undefined
+        isPaperTrading: isPaperTrading !== undefined ? isPaperTrading : undefined,
+        aiDirectives: aiDirectives !== undefined ? aiDirectives : undefined,
+        targetProfitUsdt: targetProfitUsdt !== undefined ? parseFloat(targetProfitUsdt) : undefined,
+        allocatedPortfolioUsdt: allocatedPortfolioUsdt !== undefined ? parseFloat(allocatedPortfolioUsdt) : undefined
       }
     });
 

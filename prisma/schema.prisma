@@ -8,7 +8,7 @@ datasource db {
 }
 
 model AILogStream {
-  id          String    @id
+  id          String    @id @default(uuid())
   botConfigId String
   step        AIStep
   content     String
@@ -58,6 +58,7 @@ model BotConfig {
   autoBreakevenTriggerPercent     Float           @default(2.5)
   isActive                        Boolean         @default(true)
   isPaperTrading                  Boolean         @default(true) // Default to paper for safety
+  aiDirectives                    String?         @default("เน้นความปลอดภัยและกำไรที่สม่ำเสมอ")
   AILogStream                     AILogStream[]
   ActiveTranche                   ActiveTranche[]
   User                            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -84,6 +85,9 @@ model User {
   bitgetApiKey       String?
   bitgetApiSecret    String?
   bitgetPassphrase   String?
+  bitgetDemoApiKey                String?
+  bitgetDemoApiSecret             String?
+  bitgetDemoPassphrase            String?
   aiApiKey           String?
   aiProvider         String?            @default("OPENAI")
   aiModel            String?            @default("gpt-4o")

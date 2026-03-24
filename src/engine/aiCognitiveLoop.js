@@ -7,17 +7,17 @@ const prisma = new PrismaClient();
 
 export async function runCognitiveLoop(botConfigId) {
   try {
-    const config = await prisma.botConfig.findUnique({ where: { id: botConfigId }, include: { user: true } });
+    const config = await prisma.botConfig.findUnique({ where: { id: botConfigId }, include: { User: true } });
     if (!config || !config.isActive) return null;
 
-    if (config.user.status === 'SUSPENDED' || config.user.status === 'BANNED') {
-      console.warn(`Cognitive loop aborted. User ${config.user.id} is ${config.user.status}`);
+    if (config.User.status === 'SUSPENDED' || config.User.status === 'BANNED') {
+      console.warn(`Cognitive loop aborted. User ${config.User.id} is ${config.User.status}`);
       return null;
     }
 
     await logPhase(botConfigId, 'PLAN', '[PLAN] 🧠 AI คิดแผน: เรียก Screener แสกนเหรียญและดึงสถานะตลาด');
 
-    const bitgetClient = getBitgetClient(config.user.bitgetApiKey, config.user.bitgetApiSecret, config.user.bitgetPassphrase);
+    const bitgetClient = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase);
     
     // Engine provides market data completely statelessly
     const candidates = await runAutoScreener(bitgetClient);
@@ -38,15 +38,17 @@ export async function runCognitiveLoop(botConfigId) {
     };
 
     const { client: llmClient, model: llmModel } = getLLMClient(
-      config.user.aiApiKey, 
-      config.user.aiProvider || 'OPENAI', 
-      config.user.aiModel || 'gpt-4o',
+      config.User.aiApiKey, 
+      config.User.aiProvider || 'OPENAI', 
+      config.User.aiModel || 'gpt-4o',
       true // Encrypted from DB
     );
     
     // System Rules array enforced into the LLM logic
     const rules = `
       You are an Elite Quant. The human just presses START/STOP.
+      PRIMARY MISSION DIRECTIVE: ${config.aiDirectives || "เน้นความปลอดภัยและกำไรที่สม่ำเสมอ"}
+
       Rule 1 (SPOT): LONG/HOLD only. Deep Value Accumulation if fear < 25.
       Rule 2 (FUTURES/MIXED): LONG and SHORT allowed. 
       Rule 3 (Delta-Neutral Arbitrage): If funding_rate > 0.1% and market CHOP, simultaneously BUY Spot + SHORT Futures to harvest yield. Output strategy: 'DELTA_NEUTRAL'.
@@ -78,7 +80,12 @@ export async function runCognitiveLoop(botConfigId) {
 }
 
 async function logPhase(botConfigId, step, content) {
-  await prisma.aILogStream.create({
-    data: { botConfigId, step, content, status: 'SUCCESS' }
-  });
+  try {
+    console.log(`[AI Log] ${step}: ${content.substring(0, 50)}...`);
+    await prisma.aILogStream.create({
+      data: { botConfigId, step, content, status: 'SUCCESS' }
+    });
+  } catch (err) {
+    console.error(`[AI Log Error] Failed to write to DB:`, err.message);
+  }
 }

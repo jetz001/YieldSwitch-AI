@@ -18,6 +18,9 @@ export async function GET(req) {
         bitgetApiKey: true,
         bitgetApiSecret: true,
         bitgetPassphrase: true,
+        bitgetDemoApiKey: true,
+        bitgetDemoApiSecret: true,
+        bitgetDemoPassphrase: true,
         aiApiKey: true,
         aiProvider: true,
         aiModel: true
@@ -31,6 +34,9 @@ export async function GET(req) {
       bitgetApiKey: mask(user.bitgetApiKey),
       bitgetApiSecret: mask(user.bitgetApiSecret),
       bitgetPassphrase: mask(user.bitgetPassphrase),
+      bitgetDemoApiKey: mask(user.bitgetDemoApiKey),
+      bitgetDemoApiSecret: mask(user.bitgetDemoApiSecret),
+      bitgetDemoPassphrase: mask(user.bitgetDemoPassphrase),
       aiApiKey: mask(user.aiApiKey),
       aiProvider: user.aiProvider || 'OPENAI',
       aiModel: user.aiModel || 'gpt-4o'
@@ -51,7 +57,11 @@ export async function POST(req) {
     const body = await req.json();
     console.log('[API/Users/Me] Received Update:', { ...body, aiApiKey: body.aiApiKey ? '***' : null });
     
-    const { bitgetApiKey, bitgetApiSecret, bitgetPassphrase, aiApiKey, aiProvider, aiModel } = body;
+    const { 
+      bitgetApiKey, bitgetApiSecret, bitgetPassphrase, 
+      bitgetDemoApiKey, bitgetDemoApiSecret, bitgetDemoPassphrase, 
+      aiApiKey, aiProvider, aiModel 
+    } = body;
     const userId = session.user.id;
     const { encrypt } = require('@/utils/crypto');
 
@@ -66,6 +76,9 @@ export async function POST(req) {
     if (shouldUpdate(bitgetApiKey)) updateData.bitgetApiKey = encrypt(bitgetApiKey);
     if (shouldUpdate(bitgetApiSecret)) updateData.bitgetApiSecret = encrypt(bitgetApiSecret);
     if (shouldUpdate(bitgetPassphrase)) updateData.bitgetPassphrase = encrypt(bitgetPassphrase);
+    if (shouldUpdate(bitgetDemoApiKey)) updateData.bitgetDemoApiKey = encrypt(bitgetDemoApiKey);
+    if (shouldUpdate(bitgetDemoApiSecret)) updateData.bitgetDemoApiSecret = encrypt(bitgetDemoApiSecret);
+    if (shouldUpdate(bitgetDemoPassphrase)) updateData.bitgetDemoPassphrase = encrypt(bitgetDemoPassphrase);
     if (shouldUpdate(aiApiKey)) updateData.aiApiKey = encrypt(aiApiKey);
 
     console.log('[API/Users/Me] Final Update Data Keys:', Object.keys(updateData));

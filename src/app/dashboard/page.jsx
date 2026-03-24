@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import SidebarLayout from '@/components/SidebarLayout';
+import TradingGoalCard from '@/components/TradingGoalCard';
+import PortfolioSettingsCard from '@/components/PortfolioSettingsCard';
+import CognitiveLogCard from '@/components/CognitiveLogCard';
 import { Activity, Power, Shield, Loader2, BrainCircuit } from 'lucide-react';
 
 export default function Dashboard() {
@@ -46,10 +49,11 @@ export default function Dashboard() {
   const handleToggleBot = async (field, value) => {
     setIsToggling(true);
     try {
+      const payload = typeof field === 'object' ? field : { [field]: value };
       const res = await fetch('/api/bot/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: value })
+        body: JSON.stringify(payload)
       });
       
       if (!res.ok) {
@@ -206,10 +210,11 @@ export default function Dashboard() {
 
         {/* Right Column */}
         <div className="space-y-6">
-          <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6 relative overflow-hidden">
-            <span className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">เป้าหมายกำไรสะสม (USDT)</span>
-            <div className="text-3xl font-light text-white font-mono mt-2">${stats.targetProfit.toLocaleString()}</div>
-          </div>
+          <PortfolioSettingsCard 
+            initialTarget={stats.targetProfit} 
+            initialRisk={stats.riskCapital} 
+            onSave={(vals) => handleToggleBot(vals)} 
+          />
           
           <div className="bg-teal-500/10 border border-teal-500/30 rounded-2xl p-6">
             <div className="flex justify-between items-start mb-2">
@@ -219,13 +224,12 @@ export default function Dashboard() {
             <div className="text-3xl font-light text-teal-400 font-mono">${stats.currentPnl.toLocaleString()}</div>
           </div>
 
-          <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6 h-[400px] flex flex-col justify-center items-center gap-4 text-center">
-            <Activity className="text-slate-700" size={48} />
-            <div className="text-slate-500 text-xs font-thai">
-              วงจรการทำความเข้าใจตลาด (Cognitive Cycle)<br/>
-              จะแสดงลำดับการคิดที่นี่เมื่อเริ่มออโต้ไพลอต
-            </div>
-          </div>
+          <TradingGoalCard 
+            initialValue={stats.aiDirectives} 
+            onSave={(val) => handleToggleBot('aiDirectives', val)} 
+          />
+
+          <CognitiveLogCard />
         </div>
       </div>
     </SidebarLayout>

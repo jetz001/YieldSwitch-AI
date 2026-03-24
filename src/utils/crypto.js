@@ -6,17 +6,26 @@ const keyEnv = process.env.ENCRYPTION_KEY;
 const ENCRYPTION_KEY = keyEnv ? Buffer.from(keyEnv, 'base64') : crypto.randomBytes(32);
 const IV_LENGTH = 16;
 
+if (ENCRYPTION_KEY.length !== 32) {
+  console.error(`[CRYPTO ERROR] ENCRYPTION_KEY length must be 32 bytes. Current length: ${ENCRYPTION_KEY.length}`);
+}
+
 export function encrypt(text) {
   if (!text) return null;
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
-  
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  
-  const authTag = cipher.getAuthTag().toString('hex');
-  
-  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+  try {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+    
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    
+    const authTag = cipher.getAuthTag().toString('hex');
+    
+    return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+  } catch (error) {
+    console.error('[CRYPTO] Encryption failed:', error.message);
+    return null;
+  }
 }
 
 export function decrypt(hash) {

@@ -9,9 +9,11 @@ export function getLLMClient(apiKey, provider = 'OPENAI', model = 'gpt-4o', shou
     throw new Error("No AI API Key provided.");
   }
   
-  const decryptedKey = shouldDecrypt ? decrypt(apiKey) : apiKey;
+  const shouldAttemptDecrypt = shouldDecrypt && apiKey.includes(':');
+  const decryptedKey = shouldAttemptDecrypt ? decrypt(apiKey) : apiKey;
+  
   if (!decryptedKey) {
-    throw new Error("Failed to decrypt AI API Key.");
+    throw new Error("AI API Key could not be processed.");
   }
 
   const config = {

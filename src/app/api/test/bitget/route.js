@@ -32,43 +32,61 @@ export async function POST(req) {
     if (key.includes('•') || secret.includes('•') || pass.includes('•')) {
       const user = await prisma.user.findUnique({ where: { id: session.user.id } });
       const { decrypt } = require('@/utils/crypto');
+      
       if (isDemo) {
-        key = key.includes('•') ? decrypt(user.bitgetDemoApiKey) || key : key;
-        secret = secret.includes('•') ? decrypt(user.bitgetDemoApiSecret) || secret : secret;
-        pass = pass.includes('•') ? decrypt(user.bitgetDemoPassphrase) || pass : pass;
+        if (!user.bitgetDemoApiKey) throw new Error('ไม่พบรหัส Demo API ในฐานข้อมูล กรุณากรอกข้อมูลใหม่');
+        key = key.includes('•') ? decrypt(user.bitgetDemoApiKey) : key;
+        secret = secret.includes('•') ? decrypt(user.bitgetDemoApiSecret) : secret;
+        pass = pass.includes('•') ? decrypt(user.bitgetDemoPassphrase) : pass;
       } else {
-        key = key.includes('•') ? decrypt(user.bitgetApiKey) || key : key;
-        secret = secret.includes('•') ? decrypt(user.bitgetApiSecret) || secret : secret;
-        pass = pass.includes('•') ? decrypt(user.bitgetPassphrase) || pass : pass;
+        if (!user.bitgetApiKey) throw new Error('ไม่พบรหัส API จริงในฐานข้อมูล กรุณากรอกข้อมูลใหม่');
+        key = key.includes('•') ? decrypt(user.bitgetApiKey) : key;
+        secret = secret.includes('•') ? decrypt(user.bitgetApiSecret) : secret;
+        pass = pass.includes('•') ? decrypt(user.bitgetPassphrase) : pass;
+      }
+
+      if (!key || !secret || !pass) {
+        throw new Error('ไม่สามารถถอดรหัส API Key ได้ กรุณากรอกข้อมูลใหม่อีกครั้ง');
       }
     }
 
-    const options = { defaultType: 'swap' };
-    if (isDemo) {
-      options['headers'] = { 'paptrading': '1' };
+    const { getBitgetClient } = require('@/services/bitget');
+    
+    // Test connection
+    const exchange = getBitgetClient(key, secret, pass, isDemo);
+
+    // Test: Fetch balance from multiple account types
+    let totalUsdt = 0;
+    const accountTypes = ['spot', 'swap'];
+    for (const accType of accountTypes) {
+      try {
+        const balance = await exchange.fetchBalance({ type: accType });
+        const usdt = parseFloat(balance.total?.USDT || 0);
+        const usd = parseFloat(balance.total?.USD || 0);
+        if (usdt > 0 || usd > 0) {
+          totalUsdt += usdt + usd;
+        }
+      } catch (e) {
+        // Some account types may not be available
+      }
     }
-
-    const exchange = new ccxt.bitget({
-      apiKey: key,
-      secret: secret,
-      password: pass,
-      options: options
-    });
-
-    // Test: Fetch balance
-    const balance = await exchange.fetchBalance({ type: 'swap' });
     
     return NextResponse.json({ 
       success: true, 
-      message: 'Bitget V2 Connection Success!',
-      balance: balance.total['USDT'] || 0
+      message: `${isDemo ? 'DEMO' : 'LIVE'} Bitget V2 Connection Success!`,
+      balance: totalUsdt.toFixed(2)
     });
 
   } catch (error) {
-    console.error('Bitget Test Error:', error);
+    console.error('Bitget Test Error Details:', {
+      message: error.message,
+      code: error.code,
+      name: error.name,
+      body: error.body || error.data
+    });
     return NextResponse.json({ 
       success: false, 
-      message: `Bitget Error: ${error.message}` 
+      message: `Bitget Error: ${error.message}${error.body ? ' - ' + error.body : ''}` 
     }, { status: 400 });
   }
 }

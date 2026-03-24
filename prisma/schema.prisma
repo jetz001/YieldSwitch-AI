@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 model AILogStream {
@@ -31,6 +31,8 @@ model ActiveTranche {
   remainingAmount     Float
   isCapitalExtracted  Boolean   @default(false)
   isPaperTrade        Boolean   @default(false)
+  sector              String?   @default("OTHER")
+  tpTiers             String?   // JSON: {tp1: {price, reached}, tp2: {price, reached}}
   takeProfitPrice     Float?
   stopLossPrice       Float?
   trailingStopPrice   Float?

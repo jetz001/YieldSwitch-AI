@@ -9,29 +9,34 @@ export function getBitgetClient(encryptedApiKey, encryptedSecret, encryptedPassp
     throw new Error("Incomplete Bitget API credentials provided.");
   }
 
-  const apiKey = decrypt(encryptedApiKey);
-  const secret = decrypt(encryptedSecret);
-  const password = decrypt(encryptedPassphrase);
+  const shouldDecrypt = (val) => val && val.includes(':');
+  
+  const apiKey = shouldDecrypt(encryptedApiKey) ? decrypt(encryptedApiKey) : encryptedApiKey;
+  const secret = shouldDecrypt(encryptedSecret) ? decrypt(encryptedSecret) : encryptedSecret;
+  const password = shouldDecrypt(encryptedPassphrase) ? decrypt(encryptedPassphrase) : encryptedPassphrase;
 
   if (!apiKey || !secret || !password) {
-    throw new Error("Failed to decrypt Bitget API credentials.");
+    throw new Error("Bitget API credentials could not be processed.");
   }
 
-  const options = {
-    defaultType: 'swap', // V2 uses 'swap' for futures
-    'createMarketBuyOrderRequiresPrice': false,
-    'recvWindow': 10000
-  };
-
-  if (isDemo) {
-    options['headers'] = { 'paptrading': '1' };
-  }
-
-  return new ccxt.bitget({
+  const exchange = new ccxt.bitget({
     apiKey: apiKey,
     secret: secret,
     password: password,
     enableRateLimit: true,
-    options: options
+    options: {
+      'defaultType': 'swap',
+      'createMarketBuyOrderRequiresPrice': false,
+      'recvWindow': 10000,
+      'adjustForTimeDifference': true,
+    }
   });
+
+  // Use CCXT's native sandbox mode for Demo — this switches
+  // the base URL to Bitget's demo endpoint and sets paptrading headers automatically
+  if (isDemo) {
+    exchange.setSandboxMode(true);
+  }
+
+  return exchange;
 }

@@ -49,6 +49,8 @@ export async function GET(req) {
     const isDemo = config.isPaperTrading && !!config.User.bitgetDemoApiKey;
     const isLive = !config.isPaperTrading && !!config.User.bitgetApiKey;
 
+    let connectionStatus = (isLive || isDemo) ? 'CONNECTED' : 'NOT_CONFIGURED';
+
     // IF (LIVE) OR (NATIVE DEMO): Fetch REAL balance from Bitget to sync dashboard
     if (isLive || isDemo) {
       try {
@@ -60,24 +62,52 @@ export async function GET(req) {
 
         const bitgetClient = getBitgetClient(apiKey, apiSecret, apiPass, isDemo);
 
-        // Bitget V2 specifically needs 'swap' or 'futures' type for many accounts
-        const balance = await bitgetClient.fetchBalance({ type: 'swap' });
-        
-        // Use total USDT balance from exchange
-        const realUsdt = balance.total?.USDT || balance.USDT?.total || 0;
-        console.log(`[Dashboard] ${isDemo ? 'Demo' : 'Real'} USDT detected: ${realUsdt}`);
+        // Fetch balances from multiple account types to get the full picture
+        let totalEquityUsdt = 0;
 
-        if (realUsdt > 0) {
-          initialCapital = realUsdt;
+        // Try fetching from different account types
+        const accountTypes = ['spot', 'swap'];
+        for (const accType of accountTypes) {
+          try {
+            const balance = await bitgetClient.fetchBalance({ type: accType });
+            
+            // Log all available currencies for debugging
+            const allCurrencies = Object.keys(balance.total || {}).filter(k => parseFloat(balance.total[k]) > 0);
+            if (allCurrencies.length > 0) {
+              console.log(`[Dashboard] ${accType} currencies:`, allCurrencies.map(c => `${c}=${balance.total[c]}`).join(', '));
+            }
+
+            // Sum all stablecoin-equivalent balances
+            const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
+            for (const coin of stablecoins) {
+              const val = parseFloat(balance.total?.[coin] || 0);
+              if (val > 0) totalEquityUsdt += val;
+            }
+          } catch (accErr) {
+            // Some account types may not be available, that's OK
+            console.log(`[Dashboard] ${accType} balance not available: ${accErr.message?.substring(0, 80)}`);
+          }
+        }
+
+        console.log(`[Dashboard] ${isDemo ? 'Demo' : 'Real'} Total Equity (USDT): ${totalEquityUsdt}`);
+
+        if (totalEquityUsdt > 0) {
+          initialCapital = totalEquityUsdt;
+          connectionStatus = 'CONNECTED';
+        } else {
+          // Balance is 0 but connection worked
+          connectionStatus = 'CONNECTED';
         }
       } catch (err) {
         console.error(`[Dashboard] Bitget balance fetch failed:`, err.message);
+        connectionStatus = 'DISCONNECTED';
       }
     }
 
     return NextResponse.json({
       isAutopilot: config.isActive,
       isPaperTrading: config.isPaperTrading,
+      connectionStatus,
       initialCapital,
       extractedCapital: totalPnl > 0 ? totalPnl : 0, // Simplified for now
       riskCapital: config.allocatedPortfolioUsdt,

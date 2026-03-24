@@ -108,6 +108,13 @@ export default function Dashboard() {
           </button>
 
           <div className="flex items-center gap-2 bg-[#111827] border border-slate-800 rounded-lg px-3 py-1.5">
+            <div className={`w-2 h-2 rounded-full ${stats.connectionStatus === 'CONNECTED' ? 'bg-teal-500' : stats.connectionStatus === 'DISCONNECTED' ? 'bg-red-500' : 'bg-slate-500'}`}></div>
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest font-thai">
+              {stats.connectionStatus === 'CONNECTED' ? 'เชื่อมต่อแล้ว' : stats.connectionStatus === 'DISCONNECTED' ? 'การเชื่อมต่อผิดพลาด' : 'ยังไม่ได้เชื่อมต่อ'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 bg-[#111827] border border-slate-800 rounded-lg px-3 py-1.5">
             <div className={`w-2 h-2 rounded-full ${stats.isAutopilot ? 'bg-teal-500 animate-pulse' : 'bg-slate-500'}`}></div>
             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest font-thai">{stats.isAutopilot ? 'ทำงาน' : 'หยุดพัก'}</span>
           </div>

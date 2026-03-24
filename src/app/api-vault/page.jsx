@@ -280,6 +280,12 @@ export default function ApiVault() {
                   <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? 'text-orange-400' : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
                 </div>
               </div>
+
+              <div className="mt-6 p-4 bg-orange-950/20 border border-orange-800/20 rounded-xl">
+                 <p className="text-[10px] text-orange-400/80 leading-relaxed font-thai">
+                   💡 **วิธีเปิดใช้งาน Demo**: ล็อกอิน Bitget → สลับเป็น **Demo Mode** → ไปที่ API Management → สร้าง **Demo API Key** (ต้องสร้างแยกจากคีย์หลัก)
+                 </p>
+              </div>
             </div>
           </div>
 

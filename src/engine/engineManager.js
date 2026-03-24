@@ -41,12 +41,26 @@ export async function startEngine(botConfigId) {
         const exchangeClient = getExchangeClient(config);
         if (exchangeClient && config.allocatedPortfolioUsdt > 0) {
           try {
-            const balance = await exchangeClient.fetchBalance();
-            const totalEquity = parseFloat(balance.total?.USDT || 0);
+            // Fetch balances from both spot and swap to get full equity picture
+            let totalEquity = 0;
+            const accountTypes = ['spot', 'swap'];
+            const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
+
+            for (const accType of accountTypes) {
+              try {
+                const balance = await exchangeClient.fetchBalance({ type: accType });
+                for (const coin of stablecoins) {
+                  const val = parseFloat(balance.total?.[coin] || 0);
+                  if (val > 0) totalEquity += val;
+                }
+              } catch (e) {
+                // Skip account types that don't exist
+              }
+            }
             
             const breaker = await checkGlobalCircuitBreaker(botConfigId, totalEquity);
             if (breaker) {
-              console.log(`[Engine] 🚨 CIRCUIT BREAKER TRIGGERED for ${botConfigId}. Halting.`);
+              console.log(`[Engine] 🚨 CIRCUIT BREAKER TRIGGERED for ${botConfigId}. Equity ${totalEquity.toFixed(2)} vs Budget ${config.allocatedPortfolioUsdt}. Halting.`);
               
               // Close all open positions
               try {

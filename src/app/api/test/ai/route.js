@@ -37,10 +37,10 @@ export async function POST(req) {
     // Note: In a real app, you might want to encrypt/decrypt here or handle it carefully.
     // Since this is a test, we pass the key as is (getLLMClient expects a decrypted key anyway if we bypass the database)
     
-    const { client, model } = getLLMClient(aiApiKey, aiProvider, aiModel);
+    const { client, model, provider } = getLLMClient(aiApiKey, aiProvider, aiModel);
     
     // Simple test: fetch models or do a tiny chat completion
-    if (aiProvider === 'OPENROUTER') {
+    if (provider === 'OPENROUTER') {
       const response = await fetch('https://openrouter.ai/api/v1/auth/key', {
         headers: {
           'Authorization': `Bearer ${aiApiKey}`,
@@ -52,9 +52,18 @@ export async function POST(req) {
       } else {
         return NextResponse.json({ success: false, message: data.error?.message || 'Invalid OpenRouter Key' }, { status: 400 });
       }
+    } else if (provider === 'GEMINI') {
+      // Native Gemini test
+      try {
+        // Robust check: Just list models. If this succeeds, the key is valid.
+        await client.models.list();
+        return NextResponse.json({ success: true, message: `Google Gemini API Key verified successfully (Active Model: ${model})` });
+      } catch (err) {
+        return NextResponse.json({ success: false, message: `Gemini Error: ${err.message}` }, { status: 400 });
+      }
     } else {
       // Standard OpenAI test
-      const response = await client.models.list();
+      await client.models.list();
       return NextResponse.json({ success: true, message: 'OpenAI API Key verified successfully' });
     }
 

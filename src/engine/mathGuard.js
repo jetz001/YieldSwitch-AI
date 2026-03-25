@@ -29,7 +29,10 @@ export async function checkGlobalCircuitBreaker(botConfigId, currentTotalEquityU
   if (dropPercent > 15) {
     await prisma.botConfig.update({
       where: { id: botConfigId },
-      data: { isActive: false }
+      data: { 
+        isActive: false,
+        allocatedPortfolioUsdt: currentTotalEquityUsdt // Sync budget to current reality
+      }
     });
     
     await prisma.aILogStream.create({

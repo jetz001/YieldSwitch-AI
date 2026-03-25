@@ -14,13 +14,16 @@ const activeLoops = new Map();
  */
 export async function startEngine(botConfigId) {
   if (activeLoops.has(botConfigId)) {
-    console.log(`[Engine] Loop already active for ${botConfigId}`);
-    return;
+    console.log(`[Engine] Stopping existing loop for ${botConfigId} before restart...`);
+    stopEngine(botConfigId);
   }
 
   console.log(`[Engine] Starting background loop for bot ${botConfigId}...`);
   
   const loop = async () => {
+    // Wait for the previous loop to truly exit if needed, but for simplicity we just proceed
+    // since stopEngine removes it from the map.
+    await new Promise(resolve => setTimeout(resolve, 1000));
     while (activeLoops.has(botConfigId)) {
       try {
         // Fetch fresh config to check if it's still active
@@ -42,7 +45,7 @@ export async function startEngine(botConfigId) {
         if (exchangeClient && config.allocatedPortfolioUsdt > 0) {
           try {
             // Fetch balances from both spot and swap to get full equity picture
-            let totalEquity = 0;
+            let walletEquity = 0;
             const accountTypes = ['spot', 'swap'];
             const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
 
@@ -51,27 +54,63 @@ export async function startEngine(botConfigId) {
                 const balance = await exchangeClient.fetchBalance({ type: accType });
                 for (const coin of stablecoins) {
                   const val = parseFloat(balance.total?.[coin] || 0);
-                  if (val > 0) totalEquity += val;
+                  if (val > 0) walletEquity += val;
                 }
               } catch (e) {
                 // Skip account types that don't exist
               }
             }
+
+            // Include value of open positions (unrealized P&L)
+            let unrealizedPnlTotal = 0;
+            try {
+              const positions = await exchangeClient.fetchPositions();
+              for (const pos of positions) {
+                if (parseFloat(pos.contracts) > 0) {
+                  unrealizedPnlTotal += parseFloat(pos.unrealizedPnl || 0);
+                }
+              }
+            } catch (posErr) {
+              console.warn('[Engine] Could not fetch positions for equity calculation.');
+            }
+
+            const totalEquity = walletEquity + unrealizedPnlTotal;
+            const riskThreshold = config.allocatedPortfolioUsdt * 0.85; // 15% drop
+
+            // Log details periodically (if equity is getting close or just for transparency)
+            console.log(`[Engine Guard] Total Value: $${totalEquity.toFixed(2)} (Cash: $${walletEquity.toFixed(2)}, PNL: $${unrealizedPnlTotal.toFixed(2)}) | Breaker at: $${riskThreshold.toFixed(2)}`);
             
             const breaker = await checkGlobalCircuitBreaker(botConfigId, totalEquity);
             if (breaker) {
               console.log(`[Engine] 🚨 CIRCUIT BREAKER TRIGGERED for ${botConfigId}. Equity ${totalEquity.toFixed(2)} vs Budget ${config.allocatedPortfolioUsdt}. Halting.`);
               
-              // Close all open positions
+              // 1. Close all open positions on Exchange
               try {
                 const positions = await exchangeClient.fetchPositions();
                 for (const pos of positions.filter(p => parseFloat(p.contracts) > 0)) {
                   const closeSide = pos.side === 'long' ? 'sell' : 'buy';
+                  
+                  // CANCEL ALL PENDING ORDERS FIRST
+                  try { await exchangeClient.cancelAllOrders(pos.symbol); } catch(e) {}
+                  
+                  // CLOSE POSITION
                   await exchangeClient.createMarketOrder(pos.symbol, closeSide, parseFloat(pos.contracts));
+                }
+                
+                // 2. SAFETY: Also cancel common symbols even if position is 0 (to catch hanging orders)
+                const commonSymbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XLM/USDT', 'XRP/USDT'];
+                for (const s of commonSymbols) {
+                   try { await exchangeClient.cancelAllOrders(s); } catch (e) {}
                 }
               } catch (closeErr) {
                 console.error('[Engine] Error closing positions during circuit breaker:', closeErr.message);
               }
+
+              // SYNC DATABASE: Mark all tranches as CLOSED
+              await prisma.activeTranche.updateMany({
+                where: { botConfigId, status: 'OPEN' },
+                data: { status: 'CLOSED', closedAt: new Date() }
+              });
               
               activeLoops.delete(botConfigId);
               break;
@@ -105,6 +144,9 @@ export async function startEngine(botConfigId) {
         // ═══════════════════════════════════════════════
         const cycleResult = await runCognitiveLoop(botConfigId);
         
+        // Default cooldown: 5 minutes
+        let nextSleepMs = 300000;
+
         if (cycleResult && cycleResult.status === 'SUCCESS' && cycleResult.aiTasks) {
           if (config.User) {
             let bitgetSpot, bitgetFutures;
@@ -122,10 +164,15 @@ export async function startEngine(botConfigId) {
             // Execute the plan
             await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId);
           }
+        } else if (cycleResult && cycleResult.errorType === 'QUOTA') {
+          // If Quota exhausted, back off for 10 minutes
+          console.warn(`[Engine] ⚠️ Quota Exhausted for ${botConfigId}. Waiting 10 minutes...`);
+          nextSleepMs = 600000; 
         }
 
-        // Sleep for 30 seconds (dev) / 60 seconds (prod)
-        await new Promise(resolve => setTimeout(resolve, 30000));
+        // Sleep before next cycle
+        await new Promise(resolve => setTimeout(resolve, nextSleepMs));
+
         
       } catch (error) {
         console.error(`[Engine] Critical error in loop for ${botConfigId}:`, error);
@@ -172,7 +219,7 @@ export async function initEngine() {
       // §5 State Recovery on boot
       const client = getExchangeClient(config);
       if (client) {
-        await syncState(client, config.id);
+        await syncState(client, config.id, config.isPaperTrading);
       }
       
       startEngine(config.id);

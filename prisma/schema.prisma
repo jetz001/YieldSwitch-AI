@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model AILogStream {
@@ -18,7 +18,7 @@ model AILogStream {
 }
 
 model ActiveTranche {
-  id                  String    @id @default(uuid())
+  id                  String        @id @default(uuid())
   botConfigId         String
   symbol              String
   side                String
@@ -29,37 +29,31 @@ model ActiveTranche {
   pnlUsdt             Float?
   originalAmount      Float
   remainingAmount     Float
-  isCapitalExtracted  Boolean   @default(false)
-  isPaperTrade        Boolean   @default(false)
-  sector              String?   @default("OTHER")
-  tpTiers             String?   // JSON: {tp1: {price, reached}, tp2: {price, reached}}
+  isCapitalExtracted  Boolean       @default(false)
+  isPaperTrade        Boolean       @default(false)
   takeProfitPrice     Float?
   stopLossPrice       Float?
   trailingStopPrice   Float?
-  highestPriceReached Float     @default(0)
-  openedAt            DateTime  @default(now())
+  highestPriceReached Float         @default(0)
+  openedAt            DateTime      @default(now())
   closedAt            DateTime?
-  BotConfig           BotConfig @relation(fields: [botConfigId], references: [id], onDelete: Cascade)
-}
-
-enum TrancheStatus {
-  OPEN
-  CLOSED
-  CANCELLED
+  sector              String?       @default("OTHER")
+  tpTiers             String?
+  BotConfig           BotConfig     @relation(fields: [botConfigId], references: [id], onDelete: Cascade)
 }
 
 model BotConfig {
   id                              String          @id @default(uuid())
   userId                          String
   allocatedPortfolioUsdt          Float           @default(0)
-  paperBalanceUsdt                Float           @default(100000) // Default paper capital
+  paperBalanceUsdt                Float           @default(100000)
   targetProfitUsdt                Float           @default(0)
   minSplits                       Int             @default(5)
   maxSplits                       Int             @default(10)
   capitalExtractionTriggerPercent Float           @default(5.0)
   autoBreakevenTriggerPercent     Float           @default(2.5)
   isActive                        Boolean         @default(true)
-  isPaperTrading                  Boolean         @default(true) // Default to paper for safety
+  isPaperTrading                  Boolean         @default(true)
   aiDirectives                    String?         @default("เน้นความปลอดภัยและกำไรที่สม่ำเสมอ")
   AILogStream                     AILogStream[]
   ActiveTranche                   ActiveTranche[]
@@ -78,29 +72,35 @@ model SecurityAbuseLog {
 }
 
 model User {
-  id                 String             @id
-  email              String             @unique
-  passwordHash       String?
-  authProvider       AuthProvider       @default(CREDENTIALS)
-  role               Role               @default(USER)
-  status             Status             @default(ACTIVE)
-  bitgetApiKey       String?
-  bitgetApiSecret    String?
-  bitgetPassphrase   String?
-  bitgetDemoApiKey                String?
-  bitgetDemoApiSecret             String?
-  bitgetDemoPassphrase            String?
-  aiApiKey           String?
-  aiProvider         String?            @default("OPENAI")
-  aiModel            String?            @default("gpt-4o")
-  hasAcceptedTerms   Boolean            @default(false)
-  hasAcceptedCookies Boolean            @default(false)
-  consentDate        DateTime?
-  lastActive         DateTime           @default(now())
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime
-  BotConfig          BotConfig[]
-  SecurityAbuseLog   SecurityAbuseLog[]
+  id                   String             @id
+  email                String             @unique
+  passwordHash         String?
+  authProvider         AuthProvider       @default(CREDENTIALS)
+  role                 Role               @default(USER)
+  status               Status             @default(ACTIVE)
+  bitgetApiKey         String?
+  bitgetApiSecret      String?
+  bitgetPassphrase     String?
+  aiApiKey             String?
+  aiProvider           String?            @default("OPENAI")
+  aiModel              String?            @default("gpt-4o")
+  hasAcceptedTerms     Boolean            @default(false)
+  hasAcceptedCookies   Boolean            @default(false)
+  consentDate          DateTime?
+  lastActive           DateTime           @default(now())
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime
+  bitgetDemoApiKey     String?
+  bitgetDemoApiSecret  String?
+  bitgetDemoPassphrase String?
+  BotConfig            BotConfig[]
+  SecurityAbuseLog     SecurityAbuseLog[]
+}
+
+enum TrancheStatus {
+  OPEN
+  CLOSED
+  CANCELLED
 }
 
 enum AIStep {

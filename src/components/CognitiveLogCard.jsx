@@ -1,15 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { BrainCircuit, Activity, Clock, ChevronRight } from 'lucide-react';
+import { BrainCircuit, Activity, Clock, ChevronRight, Terminal } from 'lucide-react';
 
 export default function CognitiveLogCard() {
   const [logs, setLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('PLAN');
 
   useEffect(() => {
     fetchLogs();
-    const interval = setInterval(fetchLogs, 5000); // 5s refresh
+    const interval = setInterval(fetchLogs, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -27,62 +28,78 @@ export default function CognitiveLogCard() {
     }
   };
 
-  const getStepColor = (step) => {
-    switch (step) {
-      case 'PLAN': return 'text-blue-400';
-      case 'IMPLEMENT': return 'text-teal-400';
-      case 'TRIGGER': return 'text-amber-400';
-      case 'FEEDBACK_RETRY': return 'text-red-400';
-      default: return 'text-slate-400';
-    }
-  };
+  const tabs = [
+    { id: 'PLAN', label: '1. PLAN (วางแผน)' },
+    { id: 'IMPLEMENT', label: '2. IMPLEMENT (ประยุกต์ใช้)' },
+    { id: 'TASKCHECK', label: '3. TASK CHECK (ติดตามแผน)' }
+  ];
 
-  if (isLoading && logs.length === 0) {
-    return (
-      <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6 h-[400px] flex items-center justify-center">
-        <Activity className="animate-pulse text-slate-700" size={48} />
-      </div>
-    );
-  }
+  const filteredLogs = logs.filter(log => {
+    if (activeTab === 'PLAN') return log.step === 'PLAN';
+    if (activeTab === 'IMPLEMENT') return log.step === 'IMPLEMENT';
+    if (activeTab === 'TASKCHECK') return log.step === 'TASK_CHECK' || log.step === 'TRIGGER' || log.step === 'FEEDBACK_RETRY';
+    return false;
+  });
 
   return (
-    <div className="bg-[#111827] border border-slate-800 rounded-2xl flex flex-col h-[400px] overflow-hidden">
-      <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-[#0b1121]/50">
-        <div className="flex items-center gap-2">
-            <BrainCircuit className="text-teal-500" size={18} />
-            <h3 className="text-sm font-bold text-white uppercase tracking-widest font-thai">วงจรความคิด AI (Cognitive Cycle)</h3>
+    <div className="bg-[#0b1121] border border-slate-800 rounded-2xl flex flex-col h-[500px] overflow-hidden shadow-2xl">
+      {/* Console Header */}
+      <div className="p-4 border-b border-slate-800/50 flex justify-between items-center bg-[#0d1425]">
+        <div className="flex items-center gap-3">
+            <Terminal className="text-teal-500" size={16} />
+            <h3 className="text-[10px] font-extrabold text-slate-300 uppercase tracking-[0.2em] font-mono">AI THOUGHT CONSOLE</h3>
         </div>
-        <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse"></div>
-            <span className="text-[10px] text-teal-500 font-bold uppercase tracking-tighter">Live Stream</span>
+        <div className="flex gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-red-500/20 border border-red-500/40"></div>
+            <div className="w-2 h-2 rounded-full bg-amber-500/20 border border-amber-500/40"></div>
+            <div className="w-2 h-2 rounded-full bg-green-500/20 border border-green-500/40"></div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
-        {logs.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center gap-4 text-center">
-            <Activity className="text-slate-800" size={48} />
-            <p className="text-slate-600 text-[10px] font-thai italic">
-              ยังไม่มีกิจกรรมในขณะนี้<br/>ระบบจะเริ่มบันทึกเมื่อบอทเริ่มขบวนการคิด
-            </p>
+      {/* Tabs */}
+      <div className="flex border-b border-slate-800/50 bg-[#0d1425]/50">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex-1 py-3 text-[10px] font-bold tracking-widest transition-all relative ${
+              activeTab === tab.id ? 'text-teal-400 bg-teal-500/5' : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            {tab.label}
+            {activeTab === tab.id && (
+              <div className="absolute bottom-0 left-0 w-full h-0.5 bg-teal-500"></div>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Log Content */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 font-mono scrollbar-hide bg-[#0b1121]">
+        {filteredLogs.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center gap-4 text-center opacity-30">
+            <Activity size={32} />
+            <p className="text-[10px] uppercase tracking-widest">No {activeTab} sequences recorded</p>
           </div>
         ) : (
-          logs.map((log) => (
-            <div key={log.id} className="group border-l-2 border-slate-800 hover:border-teal-500/50 pl-4 py-1 transition-all">
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-[10px] font-bold uppercase tracking-widest ${getStepColor(log.step)} flex items-center gap-1`}>
-                  <ChevronRight size={10} /> {log.step}
-                </span>
-                <span className="text-[9px] text-slate-600 flex items-center gap-1 font-mono">
-                  <Clock size={10} /> {new Date(log.timestamp).toLocaleTimeString()}
-                </span>
+          filteredLogs.map((log) => (
+            <div key={log.id} className="space-y-2">
+              <div className="text-[10px] text-slate-600">[{new Date(log.timestamp).toLocaleTimeString()}]</div>
+              <div className="flex gap-3">
+                <span className="text-[10px] font-bold text-teal-500 shrink-0">[{log.step}]</span>
+                <p className="text-xs text-slate-300 leading-relaxed font-thai whitespace-pre-wrap">
+                  {log.content}
+                </p>
               </div>
-              <p className="text-xs text-slate-300 font-thai leading-relaxed group-hover:text-white transition-colors whitespace-pre-wrap">
-                {log.content}
-              </p>
             </div>
           ))
         )}
+      </div>
+
+      {/* Bottom Status */}
+      <div className="p-3 border-t border-slate-800/50 bg-[#0d1425] flex items-center gap-2">
+        <div className="w-1.5 h-3 bg-teal-500 animate-pulse"></div>
+        <span className="text-[9px] font-bold text-teal-800 uppercase tracking-[0.2em] animate-pulse">AI IS THINKING...</span>
       </div>
     </div>
   );

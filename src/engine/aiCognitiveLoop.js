@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { getLLMClient } from '../services/llmProvider';
 import { getBitgetClient } from '../services/bitget';
 import { runAutoScreener, getFearAndGreedIndex, getBTCTrend, getSectorForSymbol } from './autoScreener';
@@ -15,7 +16,7 @@ export async function runCognitiveLoop(botConfigId) {
       return null;
     }
 
-    await logPhase(botConfigId, 'PLAN', '[PLAN] 🧠 AI คิดแผน: เรียก Screener แสกนเหรียญและดึงสถานะตลาด');
+    await logPhase(botConfigId, 'PLAN', '[1. PLAN] 🧠 ตรวจสอบตลาด: เริ่มต้นค้นหาเหรียญและวิเคราะห์สถานะตลาดผ่าน Screener');
 
     // Determine which exchange client to use for screening
     let bitgetClient;
@@ -34,7 +35,12 @@ export async function runCognitiveLoop(botConfigId) {
     const openTranches = await prisma.activeTranche.findMany({
       where: { botConfigId, status: 'OPEN' }
     });
-    const portfolioExposure = [...new Set(openTranches.map(t => getSectorForSymbol(t.symbol)))];
+
+    const portfolioExposure = openTranches.reduce((acc, t) => {
+      const sector = getSectorForSymbol(t.symbol);
+      acc[sector] = (acc[sector] || 0) + 1;
+      return acc;
+    }, {});
 
     // Count available bullets (max - currently open)
     const maxBullets = config.maxSplits || 10;
@@ -43,99 +49,147 @@ export async function runCognitiveLoop(botConfigId) {
     
     // §6 Stateless Context Injection (LLM JSON Payload)
     const contextPayload = {
-      system_directive: "Evaluate candidates. Choose a strategy (Directional, Deep Value Accumulation, Volume Anomaly Breakout, SMC Liquidity Sweep, or Delta-Neutral Arbitrage) or output SHADOW_TRADE if confidence is low. Ensure multiple TP levels (TP1 at 1.5R sell 25%, TP2 at 3.0R sell 25%, Runner 50% with Trailing Stop). Strictly follow MARKET TYPE DIRECTIVES. Include stopLossPercent and sector in each trade.",
-      trading_environment: { 
-        market_type: config.marketType || "MIXED",
-        bullets_available: bulletsAvailable, 
-        allocated_budget_usdt: config.allocatedPortfolioUsdt 
+      system_directive: "Evaluate candidates. Use strategy (Directional, Deep Value, Vol Breakout, SMC, or Delta-Neutral). Sell: TP1 1.5R (25%), TP2 3.0R (25%), Runner 50% + Trailing SL. Set stopLossPercent & sector.",
+      trading_env: { 
+        mkt_type: config.marketType || "MIXED",
+        bullets: bulletsAvailable, 
+        budget_usdt: config.allocatedPortfolioUsdt 
       },
-      market_regime: { 
+      mkt_regime: { 
         btc_trend: btcTrend,
-        fear_and_greed_index: fearGreed 
+        fng_idx: fearGreed 
       },
-      portfolio_exposure: portfolioExposure,
-      scanned_candidates: candidates.slice(0, 5)
+      portfolio_exp: portfolioExposure,
+      candidates: candidates.slice(0, 3) 
     };
 
-    const { client: llmClient, model: llmModel } = getLLMClient(
+    const { client: llmClient, model: llmModel, provider: aiProvider } = getLLMClient(
       config.User.aiApiKey, 
       config.User.aiProvider || 'OPENAI', 
       config.User.aiModel || 'gpt-4o',
       true // Encrypted from DB
     );
     
-    // §1 System Rules — comprehensive market-type-aware directives
+    console.log(`[Engine] Cognitive Cycle using: ${aiProvider} / ${llmModel}`);
+    
+    // §1 System Rules — optimized for token usage
     const rules = `
-      You are an Elite Quantitative Analyst at a top-tier Crypto Hedge Fund.
-      You MUST respond in valid JSON format.
-      PRIMARY MISSION DIRECTIVE: ${config.aiDirectives || "เน้นความปลอดภัยและกำไรที่สม่ำเสมอ"}
+      You are an Elite Quant. Respond in strictly valid JSON.
+      MISSION: ${config.aiDirectives || "Profit with safety. (เน้นกำไรและความปลอดภัย)"}
+      LANGUAGE: Use English for internal logic. Use Thai ONLY for 'reasoning' (concise).
 
-      === MARKET TYPE DIRECTIVES ===
-      The current market_type is: ${config.marketType || 'MIXED'}
-
-      IF market_type IS 'SPOT':
-        Rule 1: STRICTLY FORBIDDEN from generating "SHORT" or "sell" signals. LONG/HOLD only.
-        Rule 2: In Bearish regime or fear_and_greed < 25, use "Deep Value Accumulation" (scaling in, no hard SL).
-        Rule 3: No leverage. Risk managed purely by position sizing.
+      === MARKET DIRECTIVES (${config.marketType || 'MIXED'}) ===
+      - SPOT: NO SHORT/SELL. In Bear/Fear, use 'DEEP_VALUE' (scale-in).
+      - FUTURES/MIXED: LONG/SHORT allowed. SL < Liquidation.
+      - CHOP/RANGE: If funding > 0.1%, use 'DELTA_NEUTRAL'.
       
-      IF market_type IS 'FUTURES' or 'MIXED':
-        Rule 1: LONG and SHORT signals are both allowed.
-        Rule 2: Stop Loss MUST be tighter than calculated Liquidation Price.
-        Rule 3: If funding_rate > 0.1% and market is CHOP/RANGING, output strategy: 'DELTA_NEUTRAL' to harvest yield.
-      
-      === RISK RULES ===
-      Rule: If confidence < 70%, output action: "SHADOW_TRADE" (paper trade for learning).
-      Rule: sector of the new trade MUST differ from portfolio_exposure if that sector already has 2 holdings.
-      Rule: Always specify stopLossPercent for each trade.
-      Rule: Each trade MUST include TP scaling: tp1 (1.5R, sell 25%), tp2 (3.0R, sell 25%), runner (50% with trailing stop).
+      - Total Limit: Max 10 tranches across all coins.
+      - Sector Diversification: Distribute trades across sectors. Recommended max 2-3 per sector, but you may override based on extreme market opportunity.
+      - Always provide stopLossPercent.
 
-      === OUTPUT FORMAT ===
+      === JSON OUTPUT ===
       {
         "strategy": "DELTA_NEUTRAL|SMC_SWEEP|VOLUME_BREAKOUT|DEEP_VALUE|DIRECTIONAL|SHADOW_TRADE",
         "confidence": 0-100,
-        "reasoning": "Thai explanation of why this strategy was chosen",
-        "trades": [
-          {
-            "symbol": "BTC/USDT",
-            "side": "buy|sell",
-            "amount": 500,
-            "strategy": "DIRECTIONAL",
-            "confidence": 85,
-            "stopLossPercent": 3.5,
-            "sector": "L1",
-            "tp1_r": 1.5,
-            "tp2_r": 3.0,
-            "trailing_stop_atr_mult": 2
-          }
-        ]
+        "reasoning": "ภาษาไทยสั้นๆ อธิบายเหตุผลให้ User",
+        "trades": [{
+          "symbol": "BTC/USDT",
+          "side": "buy|sell",
+          "amount": 500,
+          "strategy": "DIRECTIONAL",
+          "confidence": 85,
+          "stopLossPercent": 3.5,
+          "sector": "L1",
+          "tp1_r": 1.5,
+          "tp2_r": 3.0,
+          "trailing_stop_atr_mult": 2
+        }]
       }
     `;
 
-    const planResponse = await llmClient.chat.completions.create({
-      model: llmModel,
-      messages: [
-        { role: 'system', content: rules },
-        { role: 'user', content: JSON.stringify(contextPayload) }
-      ],
-      response_format: { type: 'json_object' },
-      max_tokens: 2000
-    });
+    const normAiProvider = (aiProvider || 'OPENAI').trim().toUpperCase();
+    let aiOutputRaw;
 
-    const aiOutput = JSON.parse(planResponse.choices[0].message.content);
+    if (normAiProvider === 'GEMINI') {
+      try {
+        const isGemma = llmModel.toLowerCase().includes('gemma');
+        const genConfig = {
+          maxOutputTokens: 2000
+        };
+        
+        // Gemma-3 does not support native JSON mode via mimeType yet
+        if (!isGemma) {
+          genConfig.responseMimeType = "application/json";
+        }
 
-    await logPhase(botConfigId, 'IMPLEMENT', `[IMPLEMENT] ⚙️ ปรับแผน: แนะนำกลยุทธ์ ${aiOutput.strategy} (ความมั่นใจ ${aiOutput.confidence || 0}%)`);
+        const response = await llmClient.models.generateContent({
+          model: llmModel,
+          contents: [
+            { role: 'user', parts: [{ text: `${rules}\n\nCONTEXT:\n${JSON.stringify(contextPayload)}` }] }
+          ],
+          config: genConfig
+        });
+        aiOutputRaw = response.text;
+      } catch (err) {
+        if (err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED')) {
+          await logPhase(botConfigId, 'FEEDBACK_RETRY', '⚠️ เควต้า Gemini เต็ม (429): กำลังรอ 15 วินาทีเพื่อให้ระบบรีเซ็ต...');
+          await new Promise(r => setTimeout(r, 15000));
+        }
+        throw err;
+      }
+    } else {
+      const completionOptions = {
+        model: llmModel,
+        messages: [
+          { role: 'system', content: rules },
+          { role: 'user', content: JSON.stringify(contextPayload) }
+        ],
+        max_tokens: 1000
+      };
+
+      if (normAiProvider !== 'GEMINI') {
+        completionOptions.response_format = { type: 'json_object' };
+      }
+
+      const planResponse = await llmClient.chat.completions.create(completionOptions);
+      aiOutputRaw = planResponse.choices[0].message.content;
+    }
+
+    // Helper to clean JSON string from AI (remove markdown code blocks if any)
+    const cleanJsonResponse = (str) => {
+      if (!str) return "{}";
+      return str.replace(/```json/g, '').replace(/```/g, '').trim();
+    };
+
+    let aiOutput;
+    const cleanedRaw = cleanJsonResponse(aiOutputRaw);
+    try {
+      aiOutput = JSON.parse(cleanedRaw);
+    } catch (parseErr) {
+      console.error('Failed to parse AI JSON. Raw output:', cleanedRaw);
+      // Fallback: If it's a truncation issue, we might try to close the JSON manually, 
+      // but for now, we'll just throw a more descriptive error.
+      throw new Error(`AI JSON Parsing Failed: ${parseErr.message} | Context: ${cleanedRaw.substring(0, 100)}...`);
+    }
+
+    await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ ประยุกต์ใช้: นำกลยุทธ์ ${aiOutput.strategy} มาปรับค่าพารามิเตอร์สำหรับบอท (ความมั่นใจ ${aiOutput.confidence || 0}%)`);
     
     if (aiOutput.reasoning) {
       await logPhase(botConfigId, 'PLAN', `[AI REASONING] ${aiOutput.reasoning}`);
     }
 
-    await logPhase(botConfigId, 'TASK_CHECK', `[TASK CHECK] 📋 เตรียมรายการสั่งซื้อ ${(aiOutput.trades || []).length} รายการ... ส่งต่อ executionGuard.js เพื่อควบคุมคำสั่งจริง`);
+    await logPhase(botConfigId, 'TASK_CHECK', `[3. TASK CHECK] 📋 ติดตามแผน: เตรียมส่งคำสั่งซื้อจำนวน ${(aiOutput.trades || []).length} รายการ และเริ่มตรวจสอบสถานะการทำงานจริง`);
 
     return { status: 'SUCCESS', aiTasks: aiOutput };
   } catch (error) {
     console.error('AI Cognitive Loop Error:', error);
-    await logPhase(botConfigId, 'FEEDBACK_RETRY', `🚨 ข้อผิดพลาดในระบบ: ${error.message}`);
-    return { status: 'FAILED', error: error.message };
+    const isQuotaError = error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED');
+    await logPhase(botConfigId, 'FEEDBACK_RETRY', `🚨 ข้อผิดพลาดในระบบ: ${error.message}${isQuotaError ? ' (Quota Exhausted)' : ''}`);
+    return { 
+      status: 'FAILED', 
+      error: error.message,
+      errorType: isQuotaError ? 'QUOTA' : 'GENERAL'
+    };
   }
 }
 
@@ -143,7 +197,13 @@ async function logPhase(botConfigId, step, content) {
   try {
     console.log(`[AI Log] ${step}: ${content.substring(0, 80)}...`);
     await prisma.aILogStream.create({
-      data: { botConfigId, step, content, status: 'SUCCESS' }
+      data: { 
+        id: randomUUID(), // Manually generate ID to bypass DB sync issues
+        botConfigId, 
+        step, 
+        content, 
+        status: 'SUCCESS' 
+      }
     });
   } catch (err) {
     console.error(`[AI Log Error] Failed to write to DB:`, err.message);

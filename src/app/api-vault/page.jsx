@@ -303,6 +303,7 @@ export default function ApiVault() {
                 >
                   <option value="OPENAI">OpenAI (Original)</option>
                   <option value="OPENROUTER">OpenRouter (Global)</option>
+                  <option value="GEMINI">Google Gemini</option>
                 </select>
               </div>
 
@@ -313,15 +314,24 @@ export default function ApiVault() {
                   onChange={e => setForm({...form, aiModel: e.target.value})}
                   className="w-full bg-[#111827] border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
                 >
-                  {form.aiProvider === 'OPENAI' ? (
+                  {form.aiProvider === 'OPENAI' && (
                     <>
                       <option value="gpt-4o">GPT-4o</option>
                       <option value="gpt-4-turbo">GPT-4 Turbo</option>
                     </>
-                  ) : (
+                  )}
+                  {form.aiProvider === 'OPENROUTER' && (
                     <>
                       <option value="moonshotai/kimi-2.5">Kimi 2.5</option>
                       <option value="deepseek/deepseek-chat">DeepSeek Chat</option>
+                    </>
+                  )}
+                  {form.aiProvider === 'GEMINI' && (
+                    <>
+                      <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (🚀 Stable 500 RPD)</option>
+                      <option value="gemma-3-4b-it">Gemma-3 4B (✅ verified Working Now)</option>
+                      <option value="gemini-3.1-pro">Gemini 3.1 Pro (⚠️ High Rate - Likely 404)</option>
+                      <option value="nano-banana-pro">Nano Banana Pro (Image/Reasoning)</option>
                     </>
                   )}
                 </select>

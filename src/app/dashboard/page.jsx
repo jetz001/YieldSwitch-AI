@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react';
 import SidebarLayout from '@/components/SidebarLayout';
 import TradingGoalCard from '@/components/TradingGoalCard';
-import PortfolioSettingsCard from '@/components/PortfolioSettingsCard';
 import CognitiveLogCard from '@/components/CognitiveLogCard';
-import { Activity, Power, Shield, Loader2, BrainCircuit } from 'lucide-react';
+import { Activity, Power, Shield, Loader2, BrainCircuit, ArrowLeftRight } from 'lucide-react';
+import PortfolioSettingsCard from '@/components/PortfolioSettingsCard';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -85,28 +85,33 @@ export default function Dashboard() {
 
   return (
     <SidebarLayout>
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-white font-thai">แดชบอร์ด</h1>
-          <p className="text-slate-500 text-xs font-thai mt-1">
-            กำลังรันโหมด: <span className={stats.isPaperTrading ? 'text-amber-500' : 'text-teal-500'}>
-              {stats.isPaperTrading ? 'Paper Trading (จำลอง)' : 'Live Trading (จริง)'}
-            </span>
-          </p>
-        </div>
-        <div className="flex items-center gap-4">
+      <div className="flex justify-between items-start mb-8">
+        <div className="flex items-center gap-6">
+          <div>
+            <h1 className="text-3xl font-bold text-white font-thai">แดชบอร์ด</h1>
+            <p className="text-slate-500 text-xs font-thai mt-1">
+              กำลังรันโหมด: <span className={stats.isPaperTrading ? 'text-amber-500' : 'text-teal-500'}>
+                {stats.isPaperTrading ? 'Paper Trading (จำลอง)' : 'Live Trading (จริง)'}
+              </span>
+            </p>
+          </div>
+
           <button 
             onClick={() => handleToggleBot('isPaperTrading', !stats.isPaperTrading)}
             disabled={isToggling}
-            className={`px-4 py-2 rounded-lg font-bold text-xs tracking-wide transition-all border ${
+            className={`flex items-center gap-2 mt-1 px-4 py-2 rounded-xl font-bold text-xs tracking-wide transition-all border ${
               stats.isPaperTrading 
-              ? 'bg-amber-500/10 text-amber-500 border-amber-500/30' 
-              : 'bg-teal-500/10 text-teal-500 border-teal-500/30'
+              ? 'bg-amber-500/10 text-amber-500 border-amber-500/30 hover:bg-amber-500/20' 
+              : 'bg-teal-500/10 text-teal-500 border-teal-500/30 hover:bg-teal-500/20'
             }`}
           >
+            <ArrowLeftRight size={14} className="opacity-70" />
             {stats.isPaperTrading ? 'สลับเป็นโหมดจริง' : 'สลับเป็นโหมดจำลอง'}
+            <ArrowLeftRight size={14} className="opacity-70" />
           </button>
+        </div>
 
+        <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 bg-[#111827] border border-slate-800 rounded-lg px-3 py-1.5">
             <div className={`w-2 h-2 rounded-full ${stats.connectionStatus === 'CONNECTED' ? 'bg-teal-500' : stats.connectionStatus === 'DISCONNECTED' ? 'bg-red-500' : 'bg-slate-500'}`}></div>
             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest font-thai">
@@ -159,6 +164,39 @@ export default function Dashboard() {
             </div>
           </div>
 
+          {/* Wallet Assets Section */}
+          <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4 font-thai flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+              เหรียญในกระเป๋า (Wallet Assets)
+            </h2>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {stats.assets && stats.assets.length > 0 ? (
+                stats.assets
+                  .filter(a => a.total > 0.0001) // Filter out dust
+                  .sort((a, b) => b.total - a.total)
+                  .map((asset) => (
+                  <div key={asset.coin} className="bg-slate-900/50 border border-slate-800 p-3 rounded-xl flex justify-between items-center group hover:border-teal-500/30 transition-all">
+                    <div>
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{asset.coin}</div>
+                      <div className="text-lg font-mono text-slate-300 group-hover:text-teal-400 transition-colors">
+                        {asset.total % 1 === 0 ? asset.total : asset.total.toFixed(4)}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[9px] text-slate-600 font-thai">พร้อมใช้</div>
+                      <div className="text-[11px] font-mono text-slate-400">{asset.free % 1 === 0 ? asset.free : asset.free.toFixed(4)}</div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="col-span-4 py-4 text-center text-slate-600 font-thai text-sm italic border border-dashed border-slate-800 rounded-xl">
+                  ยังไม่มีข้อมูลสินทรัพย์ หรือ การเชื่อมต่อขัดข้อง
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Portfolio Tranche X-Ray */}
           <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6">
             <div className="flex justify-between items-center mb-6">
@@ -174,8 +212,9 @@ export default function Dashboard() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-slate-800 text-[10px] uppercase tracking-widest text-slate-500 font-bold">
-                    <th className="pb-3 pl-2 font-thai">เหรียญ / คำสั่ง</th>
-                    <th className="pb-3 font-thai">สถานะ</th>
+                    <th className="pb-3 pl-2 font-thai">วันที่ / เวลา</th>
+                    <th className="pb-3 font-thai">เหรียญ / คำสั่ง</th>
+                    <th className="pb-3 font-thai">สถานะ / P&L</th>
                     <th className="pb-3 font-thai">ราคาเข้า</th>
                     <th className="pb-3 text-right pr-2 font-thai">ประเภท</th>
                   </tr>
@@ -183,24 +222,46 @@ export default function Dashboard() {
                 <tbody className="divide-y divide-slate-800">
                   {positions.map((pos) => (
                     <tr key={pos.id} className="hover:bg-slate-800/30 transition-colors">
-                      <td className="py-4 pl-2">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-full ${pos.isPaperTrade ? 'bg-amber-900/30 text-amber-500 border-amber-800/50' : 'bg-teal-900/30 text-teal-500 border-teal-800/50'} flex items-center justify-center font-bold text-xs`}>
-                            {pos.symbol[0]}
-                          </div>
-                          <div>
-                            <div className="font-bold text-slate-200 text-sm">{pos.symbol}</div>
-                            <div className="text-[10px] text-teal-400 uppercase tracking-wider">{pos.side} / {pos.remainingAmount} Coins</div>
+                      <td className="py-4 pl-2 font-mono text-[10px] text-slate-500">
+                        {new Date(pos.openedAt).toLocaleString('th-TH', { 
+                          day: '2-digit', 
+                          month: '2-digit', 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        })}
+                      </td>
+                      <td className="py-4">
+                        <div className="flex flex-col">
+                          <div className="font-bold text-slate-200 text-sm">{pos.symbol}</div>
+                          <div className="text-[10px] text-teal-400 uppercase tracking-wider">
+                            {pos.side} / ${pos.remainingAmount.toLocaleString()} USDT
+                            <span className="text-slate-500 ml-1">
+                              ({(pos.remainingAmount / pos.entryPrice).toFixed(4)} {pos.symbol.split('/')[0]})
+                            </span>
                           </div>
                         </div>
                       </td>
                       <td className="py-4">
-                        <span className="flex items-center gap-1.5 w-max bg-teal-900/20 text-teal-400 border border-teal-800/50 px-2.5 py-1 rounded text-[10px] font-bold tracking-widest uppercase">
-                          <Shield size={10} /> {pos.status}
-                        </span>
+                        <div className="flex flex-col gap-1.5">
+                          <span className={`flex items-center gap-1.5 w-max border px-2.5 py-1 rounded text-[10px] font-bold tracking-widest uppercase ${
+                            pos.isMatched 
+                            ? 'bg-teal-900/20 text-teal-400 border-teal-800/50' 
+                            : 'bg-amber-900/20 text-amber-400 border-amber-800/50'
+                          }`}>
+                            <Shield size={10} /> {pos.isMatched ? 'จับคู่แล้ว' : 'รอมาร์ทชิ่ง'}
+                          </span>
+                          {pos.pnlPercent !== undefined && (
+                            <span className={`text-[11px] font-bold font-mono ${pos.pnlPercent >= 0 ? 'text-teal-500' : 'text-rose-500'}`}>
+                              {pos.pnlPercent >= 0 ? '+' : ''}{pos.pnlPercent}%
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="py-4 font-mono text-sm text-slate-300">
-                        {pos.entryPrice.toLocaleString()}
+                      <td className="py-4">
+                        <div className="flex flex-col">
+                          <span className="font-mono text-sm text-slate-300">{pos.entryPrice.toLocaleString()}</span>
+                          <span className="text-[9px] text-slate-500 font-mono">Cur: {pos.currentPrice?.toLocaleString() || '-'}</span>
+                        </div>
                       </td>
                       <td className="py-4 text-right pr-2">
                         <div className={`font-bold text-[10px] uppercase tracking-widest ${pos.isPaperTrade ? 'text-amber-500' : 'text-teal-500'}`}>
@@ -217,11 +278,6 @@ export default function Dashboard() {
 
         {/* Right Column */}
         <div className="space-y-6">
-          <PortfolioSettingsCard 
-            initialTarget={stats.targetProfit} 
-            initialRisk={stats.riskCapital} 
-            onSave={(vals) => handleToggleBot(vals)} 
-          />
           
           <div className="bg-teal-500/10 border border-teal-500/30 rounded-2xl p-6">
             <div className="flex justify-between items-start mb-2">
@@ -230,6 +286,12 @@ export default function Dashboard() {
             </div>
             <div className="text-3xl font-light text-teal-400 font-mono">${stats.currentPnl.toLocaleString()}</div>
           </div>
+
+          <PortfolioSettingsCard 
+            initialTarget={stats.targetProfit} 
+            initialRisk={stats.riskCapital} 
+            onSave={(val) => handleToggleBot(val)} 
+          />
 
           <TradingGoalCard 
             initialValue={stats.aiDirectives} 

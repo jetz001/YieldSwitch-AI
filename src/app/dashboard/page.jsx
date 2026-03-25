@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import SidebarLayout from '@/components/SidebarLayout';
 import TradingGoalCard from '@/components/TradingGoalCard';
 import CognitiveLogCard from '@/components/CognitiveLogCard';
-import { Activity, Power, Shield, Loader2, BrainCircuit, ArrowLeftRight } from 'lucide-react';
-import PortfolioSettingsCard from '@/components/PortfolioSettingsCard';
+import OrderHistoryCard from '@/components/OrderHistoryCard';
+import { Activity, Power, Shield, Loader2, BrainCircuit, ArrowLeftRight, TrendingUp, TrendingDown } from 'lucide-react';
+import { Line, LineChart, ResponsiveContainer, Tooltip } from 'recharts';
+
 
 export default function Dashboard() {
   const [stats, setStats] = useState({
@@ -17,10 +19,36 @@ export default function Dashboard() {
     targetProfit: 0,
     portfolioHealth: 100,
     currentPnl: 0,
+    walletAssetsValueUsdt: 0,
+    marketType: 'MIXED'
   });
   const [positions, setPositions] = useState([]);
+  const [pnlHistory, setPnlHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
+
+  const extractMarketTypeFromDirectives = (directives) => {
+    const text = String(directives || '');
+    const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
+    if (marker?.[1]) return marker[1].toUpperCase();
+    const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
+    if (alt?.[1]) return alt[1].toUpperCase();
+    return null;
+  };
+
+  const upsertMarketTypeMarker = (directives, nextMarketType) => {
+    const safeNext = String(nextMarketType || 'MIXED').toUpperCase();
+    const markerLine = `[[MARKET_TYPE=${safeNext}]]`;
+    const original = String(directives || '');
+
+    // Remove previous marker lines
+    const cleaned = original
+      .replace(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]\s*/gi, '')
+      .replace(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)\s*/gi, '')
+      .trim();
+
+    return cleaned.length > 0 ? `${markerLine}\n${cleaned}` : markerLine;
+  };
 
   useEffect(() => {
     fetchDashboardData();
@@ -34,13 +62,30 @@ export default function Dashboard() {
         fetch('/api/dashboard/stats'),
         fetch('/api/dashboard/positions')
       ]);
-      const sData = await sRes.json();
-      const pData = await pRes.json();
+      if (!sRes.ok) console.log('Stats fetch failed status:', sRes.status);
+      if (!pRes.ok) console.log('Positions fetch failed status:', pRes.status);
+
+      const sText = await sRes.text();
+      const pText = await pRes.text();
       
-      if (!sData.error) setStats(sData);
+      console.log('Stats Raw Text Length:', sText.length);
+      console.log('Positions Raw Text Length:', pText.length);
+
+      const sData = JSON.parse(sText);
+      const pData = JSON.parse(pText);
+      
+      if (!sData.error) {
+        setStats(sData);
+        if (typeof sData.currentPnl === 'number' && Number.isFinite(sData.currentPnl)) {
+          setPnlHistory((prev) => {
+            const next = [...prev, { t: Date.now(), pnl: sData.currentPnl }];
+            return next.slice(-40);
+          });
+        }
+      }
       if (Array.isArray(pData)) setPositions(pData);
     } catch (error) {
-      console.error('Failed to fetch dashboard data');
+      console.log('Detailed Dashboard Fetch Error:', error.message || error);
     } finally {
       setIsLoading(false);
     }
@@ -83,6 +128,15 @@ export default function Dashboard() {
     );
   }
 
+  const pnlPrev = pnlHistory.length > 1 ? pnlHistory[pnlHistory.length - 2].pnl : null;
+  const pnlDelta = pnlPrev !== null ? stats.currentPnl - pnlPrev : null;
+  const pnlIsUp = pnlDelta !== null ? pnlDelta >= 0 : null;
+
+  const derivedMarketType =
+    extractMarketTypeFromDirectives(stats.aiDirectives) ||
+    stats.marketType ||
+    'MIXED';
+
   return (
     <SidebarLayout>
       <div className="flex justify-between items-start mb-8">
@@ -117,6 +171,34 @@ export default function Dashboard() {
             <span className="text-xs font-bold text-slate-400 uppercase tracking-widest font-thai">
               {stats.connectionStatus === 'CONNECTED' ? 'เชื่อมต่อแล้ว' : stats.connectionStatus === 'DISCONNECTED' ? 'การเชื่อมต่อผิดพลาด' : 'ยังไม่ได้เชื่อมต่อ'}
             </span>
+          </div>
+
+          <div className="flex items-center gap-2 bg-[#111827] border border-slate-800 rounded-lg px-3 py-1.5">
+            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest font-thai">ตลาด</span>
+            <div className="flex items-center gap-1.5">
+              {[
+                { id: 'SPOT', label: 'Spot' },
+                { id: 'FUTURES', label: 'Future' },
+                { id: 'MIXED', label: 'Mixed' }
+              ].map((opt) => {
+                const active = derivedMarketType === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleToggleBot('aiDirectives', upsertMarketTypeMarker(stats.aiDirectives || '', opt.id))}
+                    disabled={isToggling}
+                    className={`px-2 py-1 rounded-md text-[10px] font-bold transition-colors border ${
+                      active
+                        ? 'bg-teal-500/10 text-teal-400 border-teal-500/30'
+                        : 'bg-[#0d1425] text-slate-500 border-slate-800 hover:bg-[#0d1425]/80 hover:text-slate-300'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="flex items-center gap-2 bg-[#111827] border border-slate-800 rounded-lg px-3 py-1.5">
@@ -170,6 +252,17 @@ export default function Dashboard() {
               <span className="w-2 h-2 rounded-full bg-teal-500"></span>
               เหรียญในกระเป๋า (Wallet Assets)
             </h2>
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+                รวมมูลค่ากระเป๋า (USD)
+              </div>
+              <div className="text-lg font-mono text-teal-400">
+                $
+                {Number(stats.walletAssetsValueUsdt || 0).toLocaleString('en-US', {
+                  maximumFractionDigits: 2
+                })}
+              </div>
+            </div>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {stats.assets && stats.assets.length > 0 ? (
                 stats.assets
@@ -274,6 +367,9 @@ export default function Dashboard() {
               </table>
             )}
           </div>
+
+          {/* Order History */}
+          <OrderHistoryCard />
         </div>
 
         {/* Right Column */}
@@ -284,21 +380,50 @@ export default function Dashboard() {
               <span className="text-[10px] text-teal-500 uppercase tracking-widest font-bold font-thai">อัตราการเติบโตวันนี้</span>
               <BrainCircuit className="text-teal-500" size={16} />
             </div>
-            <div className="text-3xl font-light text-teal-400 font-mono">${stats.currentPnl.toLocaleString()}</div>
+            <div className="flex items-end justify-between gap-4">
+              <div className="text-3xl font-light text-teal-400 font-mono">${stats.currentPnl.toLocaleString()}</div>
+
+              <div className={`flex items-center gap-2 text-[11px] font-bold ${
+                pnlDelta === null
+                  ? 'text-slate-500'
+                  : pnlIsUp
+                    ? 'text-teal-400'
+                    : 'text-rose-400'
+              }`}>
+                {pnlDelta === null ? null : pnlIsUp ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+                {pnlDelta === null ? '-' : `${pnlDelta >= 0 ? '+' : '-'}$${Math.abs(pnlDelta).toFixed(2)}`}
+              </div>
+            </div>
+
+            <div className="h-12 w-full mt-3">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={pnlHistory} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
+                  <Line
+                    type="monotone"
+                    dataKey="pnl"
+                    stroke={pnlDelta === null ? '#38bdf8' : pnlIsUp ? '#14b8a6' : '#f43f5e'}
+                    strokeWidth={2}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: '#0b1121', border: '1px solid #223044' }}
+                    labelStyle={{ color: '#94a3b8' }}
+                    formatter={(value) => [`$${Number(value).toFixed(2)}`]}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </div>
 
-          <PortfolioSettingsCard 
-            initialTarget={stats.targetProfit} 
-            initialRisk={stats.riskCapital} 
-            onSave={(val) => handleToggleBot(val)} 
-          />
+
 
           <TradingGoalCard 
             initialValue={stats.aiDirectives} 
             onSave={(val) => handleToggleBot('aiDirectives', val)} 
           />
 
-          <CognitiveLogCard />
+          <CognitiveLogCard aiDirectives={stats.aiDirectives} />
         </div>
       </div>
     </SidebarLayout>

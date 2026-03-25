@@ -3,6 +3,19 @@ import { calculateMaxLeverage } from './mathGuard';
 
 const prisma = new PrismaClient();
 
+function extractMarketTypeFromDirectives(directives) {
+  const text = String(directives || '');
+  // Marker written by Dashboard, e.g. [[MARKET_TYPE=SPOT]]
+  const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
+  if (marker?.[1]) return marker[1].toUpperCase();
+
+  // Fallback: allow "MARKET_TYPE=SPOT" or "MARKET_TYPE: SPOT"
+  const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
+  if (alt?.[1]) return alt[1].toUpperCase();
+
+  return null;
+}
+
 /**
  * Execution Guard - Master Prompt
  */
@@ -14,11 +27,13 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
     });
     if (!config) return;
 
+    const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || 'MIXED';
+
     for (const task of tasks.trades || []) {
       const { symbol, side, amount, strategy, confidence, stopLossPercent, sector } = task;
 
       // 1. SPOT Market Guard
-      if (config.marketType === 'SPOT' && side?.toLowerCase() === 'sell') {
+      if (marketType === 'SPOT' && side?.toLowerCase() === 'sell') {
         await prisma.aILogStream.create({
           data: {
             botConfigId,
@@ -36,8 +51,26 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       const hasNativeDemo = config.isPaperTrading && !!user.bitgetDemoApiKey;
       const isShadowMode = confidence < 70 || strategy === 'SHADOW_TRADE' || (config.isPaperTrading && !hasNativeDemo);
 
-      const client = engineClientSpot || engineClientFutures; 
-      const ticker = await client.fetchTicker(symbol);
+      const priceClient =
+        marketType === 'SPOT'
+          ? engineClientSpot
+          : marketType === 'FUTURES'
+            ? engineClientFutures
+            : engineClientFutures || engineClientSpot;
+
+      if (!priceClient) {
+        await prisma.aILogStream.create({
+          data: {
+            botConfigId,
+            step: 'TASK_CHECK',
+            content: `MarketType Guard: ไม่มี client สำหรับ ${marketType} (${symbol})`,
+            status: 'FAILED'
+          }
+        });
+        continue;
+      }
+
+      const ticker = await priceClient.fetchTicker(symbol);
       const entryPrice = side?.toLowerCase() === 'buy' ? ticker.ask : ticker.bid;
 
       await prisma.activeTranche.create({
@@ -73,8 +106,11 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       }
 
       // 4. Execution
-      const executionClient = engineClientFutures || engineClientSpot;
-      if (engineClientFutures && stopLossPercent) {
+      const executionClient = priceClient;
+      if (!executionClient) continue;
+
+      const isFuturesExecution = executionClient === engineClientFutures;
+      if (isFuturesExecution && stopLossPercent) {
         const maxLev = calculateMaxLeverage(stopLossPercent);
         const safeLeverage = Math.max(1, Math.floor(maxLev));
         try {

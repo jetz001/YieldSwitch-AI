@@ -4,7 +4,7 @@ import { decrypt } from '../utils/crypto';
 /**
  * Initializes CCXT Bitget client with the user's decrypted API keys
  */
-export function getBitgetClient(encryptedApiKey, encryptedSecret, encryptedPassphrase, isDemo = false) {
+export function getBitgetClient(encryptedApiKey, encryptedSecret, encryptedPassphrase, isDemo = false, marketType = 'FUTURES') {
   if (!encryptedApiKey || !encryptedSecret || !encryptedPassphrase) {
     throw new Error("Incomplete Bitget API credentials provided.");
   }
@@ -25,7 +25,7 @@ export function getBitgetClient(encryptedApiKey, encryptedSecret, encryptedPassp
     password: password,
     enableRateLimit: true,
     options: {
-      'defaultType': 'swap',
+      'defaultType': marketType?.toLowerCase() === 'spot' ? 'spot' : 'swap',
       'createMarketBuyOrderRequiresPrice': false,
       'recvWindow': 10000,
       'adjustForTimeDifference': true,

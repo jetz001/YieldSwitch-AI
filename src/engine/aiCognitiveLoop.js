@@ -6,6 +6,15 @@ import { runAutoScreener, getFearAndGreedIndex, getBTCTrend, getSectorForSymbol 
 
 const prisma = new PrismaClient();
 
+function extractMarketTypeFromDirectives(directives) {
+  const text = String(directives || '');
+  const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
+  if (marker?.[1]) return marker[1].toUpperCase();
+  const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
+  if (alt?.[1]) return alt[1].toUpperCase();
+  return null;
+}
+
 export async function runCognitiveLoop(botConfigId) {
   try {
     const config = await prisma.botConfig.findUnique({ where: { id: botConfigId }, include: { User: true } });
@@ -16,14 +25,16 @@ export async function runCognitiveLoop(botConfigId) {
       return null;
     }
 
-    await logPhase(botConfigId, 'PLAN', '[1. PLAN] 🧠 ตรวจสอบตลาด: เริ่มต้นค้นหาเหรียญและวิเคราะห์สถานะตลาดผ่าน Screener');
+    const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
+
+    await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 ตรวจสอบตลาด (${marketType}): เริ่มต้นค้นหาเหรียญและวิเคราะห์สถานะตลาดผ่าน Screener`);
 
     // Determine which exchange client to use for screening
     let bitgetClient;
     if (config.isPaperTrading && config.User.bitgetDemoApiKey) {
-      bitgetClient = getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true);
+      bitgetClient = getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, marketType);
     } else {
-      bitgetClient = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase);
+      bitgetClient = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, marketType);
     }
     
     // Engine provides market data completely statelessly
@@ -46,12 +57,17 @@ export async function runCognitiveLoop(botConfigId) {
     const maxBullets = config.maxSplits || 10;
     const usedBullets = openTranches.length;
     const bulletsAvailable = Math.max(0, maxBullets - usedBullets);
+
+    const cleanedAiDirectives = String(config.aiDirectives || '')
+      .replace(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]\s*/gi, '')
+      .replace(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)\s*/gi, '')
+      .trim();
     
     // §6 Stateless Context Injection (LLM JSON Payload)
     const contextPayload = {
       system_directive: "Evaluate candidates. Use strategy (Directional, Deep Value, Vol Breakout, SMC, or Delta-Neutral). Sell: TP1 1.5R (25%), TP2 3.0R (25%), Runner 50% + Trailing SL. Set stopLossPercent & sector.",
       trading_env: { 
-        mkt_type: config.marketType || "MIXED",
+        mkt_type: marketType || "MIXED",
         bullets: bulletsAvailable, 
         budget_usdt: config.allocatedPortfolioUsdt 
       },
@@ -75,13 +91,15 @@ export async function runCognitiveLoop(botConfigId) {
     // §1 System Rules — optimized for token usage
     const rules = `
       You are an Elite Quant. Respond in strictly valid JSON.
-      MISSION: ${config.aiDirectives || "Profit with safety. (เน้นกำไรและความปลอดภัย)"}
+      MISSION: ${cleanedAiDirectives || "Profit with safety. (เน้นกำไรและความปลอดภัย)"}
       LANGUAGE: Use English for internal logic. Use Thai ONLY for 'reasoning' (concise).
 
-      === MARKET DIRECTIVES (${config.marketType || 'MIXED'}) ===
-      - SPOT: NO SHORT/SELL. In Bear/Fear, use 'DEEP_VALUE' (scale-in).
-      - FUTURES/MIXED: LONG/SHORT allowed. SL < Liquidation.
-      - CHOP/RANGE: If funding > 0.1%, use 'DELTA_NEUTRAL'.
+      === MARKET DIRECTIVES (${marketType || 'MIXED'}) ===
+      - SPOT: NO SHORT/SELL allowed. Use only 'DEEP_VALUE' or 'DIRECTIONAL' BUY.
+      - FUTURES: You MUST look for both LONG and SHORT opportunities. Use Leverage (set stopLossPercent to auto-calculate).
+      - MIXED: You decide between Spot and Futures based on market trend.
+      
+      - Current Market Mode is ${marketType}. If it is FUTURES, you are expected to utilize Shorting if the trend is bearish.
       
       - Total Limit: Max 10 tranches across all coins.
       - Sector Diversification: Distribute trades across sectors. Recommended max 2-3 per sector, but you may override based on extreme market opportunity.

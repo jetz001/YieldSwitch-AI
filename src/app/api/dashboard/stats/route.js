@@ -51,6 +51,7 @@ export async function GET(req) {
         const bitgetClient = getBitgetClient(apiKey, apiSecret, apiPass, isDemo);
 
         let totalEquityUsdt = 0;
+        let walletAssetsValueUsdt = 0;
         let assetsMap = {};
 
         const fetchBal = async (type) => {
@@ -73,8 +74,18 @@ export async function GET(req) {
 
         const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
         for (const coin of stablecoins) {
-          totalEquityUsdt += assetsMap[coin]?.total || 0;
+          const amt = assetsMap[coin]?.total || 0;
+          totalEquityUsdt += amt;
+          walletAssetsValueUsdt += amt;
         }
+
+        // Best-effort: convert non-stable assets to USDT value using ticker.last
+        // Note: some assets may not have a direct /USDT market; those will be skipped.
+        try {
+          if (Object.keys(assetsMap).length > 0) {
+            await bitgetClient.loadMarkets();
+          }
+        } catch (e) {}
 
         try {
           const positions = await bitgetClient.fetchPositions();
@@ -85,12 +96,62 @@ export async function GET(req) {
           }
         } catch (e) {}
 
+        // Price non-stable assets
+        try {
+          const stablecoinSet = new Set(stablecoins);
+          const nonStableAssets = Object.values(assetsMap).filter((a) => a?.total > 0 && !stablecoinSet.has(a.coin));
+          // Sort to reduce expensive calls when there are many small dust assets
+          nonStableAssets.sort((a, b) => b.total - a.total);
+          const assetsToPrice = nonStableAssets.slice(0, 15);
+
+          for (const asset of assetsToPrice) {
+            let currentPrice = null;
+            const candidates = [
+              `${asset.coin}/USDT`,
+              `${asset.coin}/USDT:USDT`,
+              `${asset.coin}/USD`
+            ];
+
+            for (const sym of candidates) {
+              try {
+                // If markets are loaded, prefer exact symbol matches.
+                if (bitgetClient.markets && bitgetClient.markets[sym] === undefined) {
+                  continue;
+                }
+              } catch (e) {}
+
+              try {
+                const ticker = await bitgetClient.fetchTicker(sym);
+                const last = ticker?.last ?? ticker?.close;
+                if (typeof last === 'number' && Number.isFinite(last) && last > 0) {
+                  currentPrice = last;
+                  break;
+                }
+                if (ticker?.bid && ticker?.ask) {
+                  const mid = (ticker.bid + ticker.ask) / 2;
+                  if (mid > 0) {
+                    currentPrice = mid;
+                    break;
+                  }
+                }
+              } catch (e) {
+                // Try next candidate symbol
+              }
+            }
+
+            if (currentPrice !== null) {
+              walletAssetsValueUsdt += asset.total * currentPrice;
+            }
+          }
+        } catch (e) {}
+
         if (totalEquityUsdt > 0) initialCapital = totalEquityUsdt;
         assets = Object.values(assetsMap);
 
         return NextResponse.json({
           isAutopilot: config.isActive,
           isPaperTrading: config.isPaperTrading,
+          marketType: config.marketType || 'MIXED',
           connectionStatus: 'CONNECTED',
           initialCapital,
           extractedCapital: totalPnl > 0 ? totalPnl : 0,
@@ -98,6 +159,7 @@ export async function GET(req) {
           targetProfit: config.targetProfitUsdt,
           portfolioHealth: 100 - (activePositions.length * 2),
           currentPnl: totalPnl + paperPnl,
+          walletAssetsValueUsdt,
           aiDirectives: config.aiDirectives || "เน้นความปลอดภัยและกำไรที่สม่ำเสมอ",
           assets
         });
@@ -109,6 +171,7 @@ export async function GET(req) {
     return NextResponse.json({
       isAutopilot: config.isActive,
       isPaperTrading: config.isPaperTrading,
+      marketType: config.marketType || 'MIXED',
       connectionStatus,
       initialCapital,
       extractedCapital: totalPnl > 0 ? totalPnl : 0,
@@ -116,6 +179,7 @@ export async function GET(req) {
       targetProfit: config.targetProfitUsdt,
       portfolioHealth: 100 - (activePositions.length * 2),
       currentPnl: totalPnl + paperPnl,
+      walletAssetsValueUsdt: 0,
       aiDirectives: config.aiDirectives || "เน้นความปลอดภัยและกำไรที่สม่ำเสมอ",
       assets: []
     });

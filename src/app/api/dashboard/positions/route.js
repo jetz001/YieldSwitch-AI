@@ -21,50 +21,86 @@ export async function GET(req) {
 
     if (!config) return NextResponse.json([]);
 
+    // Parse query params for search/filter
+    const { searchParams } = new URL(req.url);
+    const search = searchParams.get('search')?.trim().toUpperCase() || '';
+    const statusFilter = searchParams.get('status')?.toUpperCase() || 'ALL';
+
+    // Build query: show ALL positions (OPEN, CLOSED, CANCELLED)
+    const whereClause = { botConfigId: config.id };
+    if (statusFilter !== 'ALL') {
+      whereClause.status = statusFilter;
+    }
+    if (search) {
+      whereClause.symbol = { contains: search, mode: 'insensitive' };
+    }
+
     const positions = await prisma.activeTranche.findMany({
-      where: { botConfigId: config.id, status: 'OPEN' },
-      orderBy: { openedAt: 'desc' }
+      where: whereClause,
+      orderBy: { openedAt: 'desc' },
+      take: 100
     });
 
     if (positions.length === 0) return NextResponse.json([]);
 
-    // Enhancement: Fetch Real-time P&L and Matching Status
+    // Set up exchange client for real-time prices (OPEN positions only)
     let client;
-    if (config.isPaperTrading && config.User?.bitgetDemoApiKey) {
-      client = getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true);
-    } else {
-      client = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false);
+    try {
+      if (config.isPaperTrading && config.User?.bitgetDemoApiKey) {
+        client = getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true);
+      } else if (config.User?.bitgetApiKey) {
+        client = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false);
+      }
+    } catch (e) {
+      client = null;
     }
 
-    // 1. Fetch ALL open orders from exchange to check for "Pending" status
+    // Fetch open orders for matching check (only if we have a client)
     let openOrders = [];
     let hasExchangeConnection = false;
-    try {
-      openOrders = await client.fetchOpenOrders();
-      hasExchangeConnection = true;
-    } catch (e) {
-      console.warn('[Dashboard] Could not fetch open orders for matching check.');
+    if (client) {
+      try {
+        openOrders = await client.fetchOpenOrders();
+        hasExchangeConnection = true;
+      } catch (e) {
+        console.warn('[Dashboard] Could not fetch open orders for matching check.');
+      }
     }
 
     const augmentedPositions = await Promise.all(positions.map(async (pos) => {
+      // For CLOSED/CANCELLED positions, use stored data — no live fetch needed
+      if (pos.status !== 'OPEN') {
+        return {
+          ...pos,
+          currentPrice: pos.exitPrice || pos.entryPrice,
+          pnlPercent: pos.pnlUsdt && pos.originalAmount > 0
+            ? parseFloat(((pos.pnlUsdt / pos.originalAmount) * 100).toFixed(2))
+            : 0,
+          isMatched: true,
+        };
+      }
+
+      // For OPEN positions, fetch real-time data
+      if (!client) {
+        return { ...pos, currentPrice: pos.entryPrice, pnlPercent: 0, isMatched: true };
+      }
+
       try {
         const ticker = await client.fetchTicker(pos.symbol);
         const currentPrice = ticker.last || ticker.close || pos.entryPrice;
-        const pnlPercent = pos.side.toUpperCase() === 'BUY' 
+        const pnlPercent = pos.side.toUpperCase() === 'BUY'
           ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
           : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
-        
-        // 2. Check if this specific tranche is "Matched"
-        // Logic: If it's NOT in the list of Open Orders, it must be Matched (Filled).
+
+        // Matching logic
         let isMatched = false;
         const isActuallyTrading = (config.isPaperTrading && !!config.User.bitgetDemoApiKey) || !config.isPaperTrading;
 
         if (!isActuallyTrading || pos.trancheGroupId.startsWith('sync')) {
-          isMatched = true; // Simulated or already synced positions are matched
+          isMatched = true;
         } else if (hasExchangeConnection) {
-          // If no open orders exist for this symbol/side, we assume it's matched/filled.
-          const isPending = openOrders.some(o => 
-            o.symbol === pos.symbol && 
+          const isPending = openOrders.some(o =>
+            o.symbol === pos.symbol &&
             o.side?.toLowerCase() === pos.side?.toLowerCase()
           );
           isMatched = !isPending;

@@ -1,9 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { BrainCircuit, Activity, Clock, ChevronRight, Terminal } from 'lucide-react';
+import { Activity, Terminal } from 'lucide-react';
 
-export default function CognitiveLogCard() {
+export default function CognitiveLogCard({ aiDirectives }) {
+  const cleanedDirectives = (() => {
+    const text = String(aiDirectives || '');
+    return text
+      .replace(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]\s*/gi, '')
+      .replace(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)\s*/gi, '')
+      .trim();
+  })();
   const [logs, setLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('PLAN');
@@ -17,12 +24,15 @@ export default function CognitiveLogCard() {
   const fetchLogs = async () => {
     try {
       const res = await fetch('/api/bot/logs');
-      const data = await res.json();
+      if (!res.ok) console.log('Logs fetch failed status:', res.status);
+      const text = await res.text();
+      console.log('Logs Raw Text Length:', text.length);
+      const data = JSON.parse(text);
       if (Array.isArray(data)) {
         setLogs(data);
       }
     } catch (error) {
-      console.error('Failed to fetch AI logs');
+      console.log('Detailed AI Logs Fetch Error:', error.message || error);
     } finally {
       setIsLoading(false);
     }
@@ -53,6 +63,16 @@ export default function CognitiveLogCard() {
             <div className="w-2 h-2 rounded-full bg-red-500/20 border border-red-500/40"></div>
             <div className="w-2 h-2 rounded-full bg-amber-500/20 border border-amber-500/40"></div>
             <div className="w-2 h-2 rounded-full bg-green-500/20 border border-green-500/40"></div>
+        </div>
+      </div>
+
+      {/* Goal & AI Instructions (for PLAN reading) */}
+      <div className="px-4 py-3 border-b border-slate-800/50 bg-[#0d1425]/30">
+        <div className="text-[10px] font-bold text-slate-300 uppercase tracking-widest font-thai mb-1">
+          เป้าหมาย & คำสั่ง AI ที่ใช้งานอยู่
+        </div>
+        <div className="text-xs text-slate-200 font-thai whitespace-pre-wrap max-h-20 overflow-y-auto leading-relaxed">
+          {cleanedDirectives || 'ยังไม่พบข้อมูลคำสั่ง AI (กรุณาตั้งค่าที่ Dashboard / Trading Goal)'}
         </div>
       </div>
 

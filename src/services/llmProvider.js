@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
-import { decrypt } from '../utils/crypto';
+import { decrypt } from '../utils/crypto.js';
 
 /**
  * Initializes an LLM client with the user's decrypted API key

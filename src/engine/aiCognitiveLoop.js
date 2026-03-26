@@ -1,8 +1,8 @@
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { getLLMClient } from '../services/llmProvider';
-import { getBitgetClient } from '../services/bitget';
-import { runAutoScreener, getFearAndGreedIndex, getBTCTrend, getSectorForSymbol } from './autoScreener';
+import { getLLMClient } from '../services/llmProvider.js';
+import { getBitgetClient } from '../services/bitget.js';
+import { runAutoScreener, getFearAndGreedIndex, getBTCTrend, getSectorForSymbol } from './autoScreener.js';
 
 const prisma = new PrismaClient();
 

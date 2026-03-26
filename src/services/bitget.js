@@ -1,5 +1,5 @@
 import ccxt from 'ccxt';
-import { decrypt } from '../utils/crypto';
+import { decrypt } from '../utils/crypto.js';
 
 /**
  * Initializes CCXT Bitget client with the user's decrypted API keys

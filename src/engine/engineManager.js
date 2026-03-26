@@ -1,8 +1,8 @@
-import { runCognitiveLoop } from './aiCognitiveLoop';
-import { executeStrategy } from './executionGuard';
-import { syncState } from './executionGuard';
-import { checkGlobalCircuitBreaker, checkZombieGuard, tickMathGuard } from './mathGuard';
-import { getBitgetClient } from '../services/bitget';
+import { runCognitiveLoop } from './aiCognitiveLoop.js';
+import { executeStrategy } from './executionGuard.js';
+import { syncState } from './executionGuard.js';
+import { checkGlobalCircuitBreaker, checkZombieGuard, tickMathGuard } from './mathGuard.js';
+import { getBitgetClient } from '../services/bitget.js';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();

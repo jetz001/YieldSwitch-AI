@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { calculateMaxLeverage } from './mathGuard';
+import { calculateMaxLeverage } from './mathGuard.js';
 
 const prisma = new PrismaClient();
 
@@ -152,6 +152,10 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
           }
         });
         continue;
+      }
+
+      if (priceClient) {
+        try { await priceClient.loadMarkets(); } catch (e) {}
       }
 
       // 2. Pre-trade Balance Guard

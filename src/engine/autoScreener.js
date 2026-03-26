@@ -1,5 +1,5 @@
 import ccxt from 'ccxt';
-import { analyzeOHLCV, detectBTCTrend } from '../services/technicalData';
+import { analyzeOHLCV, detectBTCTrend } from '../services/technicalData.js';
 
 /**
  * Map symbol to correct Bitget format (same function as in executionGuard)
@@ -89,7 +89,7 @@ export async function runAutoScreener(exchangeClient) {
   try {
     await exchangeClient.loadMarkets();
     const markets = Object.values(exchangeClient.markets).filter(
-      m => m.active && !m.symbol.endsWith('/USDT:USDT') && m.symbol.includes('USDT')
+      m => m.active && (m.symbol.includes('USDT') || m.symbol.includes('SUSDT'))
     );
     
     // Sort by something if we can, or just take first 100 for radar

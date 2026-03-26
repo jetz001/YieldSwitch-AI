@@ -54,6 +54,11 @@ export async function GET(req) {
         let walletAssetsValueUsdt = 0;
         let assetsMap = {};
 
+        let spotAssets = [];
+        let futureAssets = [];
+        let spotValueUsdt = 0;
+        let futureValueUsdt = 0;
+
         const fetchBal = async (type) => {
           try {
             const bal = await bitgetClient.fetchBalance({ type });
@@ -64,6 +69,10 @@ export async function GET(req) {
                 assetsMap[coin].total += total;
                 assetsMap[coin].free += parseFloat(bal.free?.[coin] || 0);
                 assetsMap[coin].used += parseFloat(bal.used?.[coin] || 0);
+
+                const item = { coin, total, free: parseFloat(bal.free?.[coin] || 0), used: parseFloat(bal.used?.[coin] || 0) };
+                if (type === 'spot') spotAssets.push(item);
+                if (type === 'swap') futureAssets.push(item);
               }
             }
           } catch (e) {}
@@ -73,79 +82,54 @@ export async function GET(req) {
         await fetchBal('spot');
 
         const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
-        for (const coin of stablecoins) {
-          const amt = assetsMap[coin]?.total || 0;
-          totalEquityUsdt += amt;
-          walletAssetsValueUsdt += amt;
-        }
+        const stableSet = new Set(stablecoins);
+        
+        // Initial valuation with stables
+        spotAssets.forEach(a => { if(stableSet.has(a.coin)) spotValueUsdt += a.total; });
+        futureAssets.forEach(a => { if(stableSet.has(a.coin)) futureValueUsdt += a.total; });
+        
+        walletAssetsValueUsdt = spotValueUsdt + futureValueUsdt;
+        totalEquityUsdt = walletAssetsValueUsdt;
 
-        // Best-effort: convert non-stable assets to USDT value using ticker.last
-        // Note: some assets may not have a direct /USDT market; those will be skipped.
         try {
           if (Object.keys(assetsMap).length > 0) {
             await bitgetClient.loadMarkets();
           }
         } catch (e) {}
 
+        // Positions valuation (Futures only)
         try {
           const positions = await bitgetClient.fetchPositions();
           for (const pos of positions) {
             if (parseFloat(pos.contracts) > 0) {
-              totalEquityUsdt += parseFloat(pos.unrealizedPnl || 0);
+              const upnl = parseFloat(pos.unrealizedPnl || 0);
+              totalEquityUsdt += upnl;
+              futureValueUsdt += upnl;
             }
           }
         } catch (e) {}
 
-        // Price non-stable assets
-        try {
-          const stablecoinSet = new Set(stablecoins);
-          const nonStableAssets = Object.values(assetsMap).filter((a) => a?.total > 0 && !stablecoinSet.has(a.coin));
-          // Sort to reduce expensive calls when there are many small dust assets
-          nonStableAssets.sort((a, b) => b.total - a.total);
-          const assetsToPrice = nonStableAssets.slice(0, 15);
-
-          for (const asset of assetsToPrice) {
-            let currentPrice = null;
-            const candidates = [
-              `${asset.coin}/USDT`,
-              `${asset.coin}/USDT:USDT`,
-              `${asset.coin}/USD`
-            ];
-
-            for (const sym of candidates) {
-              try {
-                // If markets are loaded, prefer exact symbol matches.
-                if (bitgetClient.markets && bitgetClient.markets[sym] === undefined) {
-                  continue;
-                }
-              } catch (e) {}
-
-              try {
-                const ticker = await bitgetClient.fetchTicker(sym);
-                const last = ticker?.last ?? ticker?.close;
-                if (typeof last === 'number' && Number.isFinite(last) && last > 0) {
-                  currentPrice = last;
-                  break;
-                }
-                if (ticker?.bid && ticker?.ask) {
-                  const mid = (ticker.bid + ticker.ask) / 2;
-                  if (mid > 0) {
-                    currentPrice = mid;
-                    break;
-                  }
-                }
-              } catch (e) {
-                // Try next candidate symbol
-              }
-            }
-
-            if (currentPrice !== null) {
-              walletAssetsValueUsdt += asset.total * currentPrice;
-            }
+        // Price non-stable assets for both tabs
+        const priceAsset = async (asset) => {
+          if (stableSet.has(asset.coin)) return 0;
+          let currentPrice = null;
+          const candidates = [`${asset.coin}/USDT`, `${asset.coin}/USDT:USDT`, `${asset.coin}/USD` ];
+          for (const sym of candidates) {
+            try {
+              if (bitgetClient.markets && bitgetClient.markets[sym] === undefined) continue;
+              const ticker = await bitgetClient.fetchTicker(sym);
+              const last = ticker?.last ?? ticker?.close;
+              if (typeof last === 'number' && Number.isFinite(last) && last > 0) { currentPrice = last; break; }
+            } catch (e) {}
           }
-        } catch (e) {}
+          return currentPrice ? asset.total * currentPrice : 0;
+        };
 
-        if (totalEquityUsdt > 0) initialCapital = totalEquityUsdt;
+        // Valuation update (async for each asset)
+        for (const a of spotAssets) { spotValueUsdt += await priceAsset(a); }
+        for (const a of futureAssets) { futureValueUsdt += await priceAsset(a); }
+        
+        walletAssetsValueUsdt = spotValueUsdt + futureValueUsdt;
         assets = Object.values(assetsMap);
 
         return NextResponse.json({
@@ -160,8 +144,12 @@ export async function GET(req) {
           portfolioHealth: 100 - (activePositions.length * 2),
           currentPnl: totalPnl + paperPnl,
           walletAssetsValueUsdt,
+          spotValueUsdt,
+          futureValueUsdt,
           aiDirectives: config.aiDirectives || "เน้นความปลอดภัยและกำไรที่สม่ำเสมอ",
-          assets
+          assets,
+          spotAssets,
+          futureAssets
         });
       } catch (err) {
         console.error(`[Dashboard] Bitget fetch failed:`, err.message);

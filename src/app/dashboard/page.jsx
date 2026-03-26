@@ -20,8 +20,11 @@ export default function Dashboard() {
     portfolioHealth: 100,
     currentPnl: 0,
     walletAssetsValueUsdt: 0,
-    marketType: 'MIXED'
+    marketType: 'MIXED',
+    spotAssets: [],
+    futureAssets: []
   });
+  const [walletTab, setWalletTab] = useState('SPOT');
   const [positions, setPositions] = useState([]);
   const [pnlHistory, setPnlHistory] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -267,45 +270,79 @@ export default function Dashboard() {
 
           {/* Wallet Assets Section */}
           <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6">
-            <h2 className="text-xl font-bold text-white mb-4 font-thai flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-teal-500"></span>
-              เหรียญในกระเป๋า (Wallet Assets)
-            </h2>
-            <div className="mb-4 flex items-center justify-between gap-4">
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
-                รวมมูลค่ากระเป๋า (USD)
-              </div>
-              <div className="text-lg font-mono text-teal-400">
-                $
-                {Number(stats.walletAssetsValueUsdt || 0).toLocaleString('en-US', {
-                  maximumFractionDigits: 2
-                })}
+            <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-2">
+              <h2 className="text-xl font-bold text-white font-thai flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-teal-500"></span>
+                เหรียญในกระเป๋า (Wallet Assets)
+              </h2>
+              <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800">
+                <button
+                  onClick={() => setWalletTab('SPOT')}
+                  className={`px-4 py-1.5 rounded-md text-[10px] font-bold transition-all ${
+                    walletTab === 'SPOT' 
+                    ? 'bg-teal-500 text-slate-900 shadow-[0_0_15px_rgba(20,184,166,0.3)]' 
+                    : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  SPOT
+                </button>
+                <button
+                  onClick={() => setWalletTab('FUTURE')}
+                  className={`px-4 py-1.5 rounded-md text-[10px] font-bold transition-all ${
+                    walletTab === 'FUTURE' 
+                    ? 'bg-amber-500 text-slate-900 shadow-[0_0_15px_rgba(245,158,11,0.3)]' 
+                    : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  FUTURE
+                </button>
               </div>
             </div>
+
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+                รวมมูลค่า{walletTab === 'SPOT' ? 'สปอต' : 'ฟิวเจอร์ส'} (USD)
+              </div>
+              <div className={`text-lg font-mono ${walletTab === 'SPOT' ? 'text-teal-400' : 'text-amber-400'}`}>
+                $
+                {(() => {
+                  const val = walletTab === 'SPOT' ? (stats.spotValueUsdt || 0) : (stats.futureValueUsdt || 0);
+                  return Number(val).toLocaleString('en-US', {
+                    maximumFractionDigits: 2
+                  });
+                })()}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              {stats.assets && stats.assets.length > 0 ? (
-                stats.assets
-                  .filter(a => a.total > 0.0001) // Filter out dust
-                  .sort((a, b) => b.total - a.total)
-                  .map((asset) => (
-                  <div key={asset.coin} className="bg-slate-900/50 border border-slate-800 p-3 rounded-xl flex justify-between items-center group hover:border-teal-500/30 transition-all">
-                    <div>
-                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{asset.coin}</div>
-                      <div className="text-lg font-mono text-slate-300 group-hover:text-teal-400 transition-colors">
-                        {asset.total % 1 === 0 ? asset.total : asset.total.toFixed(4)}
+              {(() => {
+                const displayAssets = walletTab === 'SPOT' ? (stats.spotAssets || []) : (stats.futureAssets || []);
+                return displayAssets.length > 0 ? (
+                  displayAssets
+                    .filter(a => a.total > 0.0001) // Filter out dust
+                    .sort((a, b) => b.total - a.total)
+                    .map((asset) => (
+                    <div key={asset.coin} className={`bg-slate-900/50 border p-3 rounded-xl flex justify-between items-center group transition-all ${
+                      walletTab === 'SPOT' ? 'border-slate-800 hover:border-teal-500/30' : 'border-slate-800 hover:border-amber-500/30'
+                    }`}>
+                      <div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">{asset.coin}</div>
+                        <div className={`text-lg font-mono transition-colors ${walletTab === 'SPOT' ? 'text-slate-300 group-hover:text-teal-400' : 'text-slate-300 group-hover:text-amber-400'}`}>
+                          {asset.total % 1 === 0 ? asset.total : asset.total.toFixed(4)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[9px] text-slate-600 font-thai">พร้อมใช้</div>
+                        <div className="text-[11px] font-mono text-slate-400">{asset.free % 1 === 0 ? asset.free : asset.free.toFixed(4)}</div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-[9px] text-slate-600 font-thai">พร้อมใช้</div>
-                      <div className="text-[11px] font-mono text-slate-400">{asset.free % 1 === 0 ? asset.free : asset.free.toFixed(4)}</div>
-                    </div>
+                  ))
+                ) : (
+                  <div className="col-span-4 py-8 text-center text-slate-600 font-thai text-sm italic border border-dashed border-slate-800 rounded-xl bg-slate-900/20">
+                    ไม่พบสินทรัพย์ในกระเป๋า {walletTab === 'SPOT' ? 'Spot' : 'Future'}
                   </div>
-                ))
-              ) : (
-                <div className="col-span-4 py-4 text-center text-slate-600 font-thai text-sm italic border border-dashed border-slate-800 rounded-xl">
-                  ยังไม่มีข้อมูลสินทรัพย์ หรือ การเชื่อมต่อขัดข้อง
-                </div>
-              )}
+                );
+              })()}
             </div>
           </div>
 

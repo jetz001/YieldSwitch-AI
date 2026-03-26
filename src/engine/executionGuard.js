@@ -161,15 +161,25 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       // 2. Pre-trade Balance Guard
       try {
         const balance = await priceClient.fetchBalance();
-        const asset = marketType === 'SPOT' ? 'USDT' : 'USDT'; // Both use USDT for settlement usually
-        const freeBalance = (balance[asset] && balance[asset].free) || 0;
+        // Bitget can return balance under USDT, SUSDT, or USDC depending on account type
+        const possibleAssets = ['USDT', 'SUSDT', 'USDC'];
+        let freeBalance = 0;
+        let detectedAsset = 'USDT';
+
+        for (const asset of possibleAssets) {
+          const amount = (balance[asset] && balance[asset].free) || 0;
+          if (amount > freeBalance) {
+            freeBalance = amount;
+            detectedAsset = asset;
+          }
+        }
         
         if (freeBalance < amount) {
           await prisma.aILogStream.create({
             data: {
               botConfigId,
               step: 'TASK_CHECK',
-              content: `⚠️ ยอดเงินไม่พอ: ต้องการ ${amount} USDT แต่มีเพียง ${freeBalance.toFixed(2)} USDT (${symbol})`,
+              content: `⚠️ ยอดเงินไม่พอ: ต้องการ ${amount} USDT แต่มีเพียง ${freeBalance.toFixed(2)} ${detectedAsset} (${symbol})`,
               status: 'FAILED'
             }
           });

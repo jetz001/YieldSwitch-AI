@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { getLLMClient } from '../services/llmProvider.js';
 import { getBitgetClient } from '../services/bitget.js';
 import { runAutoScreener, getFearAndGreedIndex, getBTCTrend, getSectorForSymbol } from './autoScreener.js';
+import { calculateSLPrice, calculateTPTiers } from '../utils/priceMath.js';
 
 const prisma = new PrismaClient();
 

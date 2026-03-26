@@ -181,11 +181,33 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         }
         
         if (freeBalance < amount) {
+          let diagnosticMsg = `⚠️ ยอดเงินไม่พอในบัญชี ${marketType}: ต้องการ ${amount} USDT แต่มีเพียง ${freeBalance.toFixed(2)} ${detectedAsset} (${symbol})`;
+          
+          // Helper diagnosis: Check the 'other' account
+          try {
+            const otherClient = marketType === 'FUTURES' ? engineClientSpot : engineClientFutures;
+            if (otherClient) {
+              const otherBal = await otherClient.fetchBalance();
+              const otherType = marketType === 'FUTURES' ? 'SPOT' : 'FUTURES';
+              
+              let otherValue = 0;
+              for (const asset of possibleAssets) {
+                const f1 = (otherBal[asset] && typeof otherBal[asset] === 'object') ? (otherBal[asset].free || 0) : 0;
+                const f2 = (otherBal.free && otherBal.free[asset]) || 0;
+                otherValue = Math.max(otherValue, parseFloat(f1), parseFloat(f2));
+              }
+              
+              if (otherValue > amount) {
+                diagnosticMsg += `\n💡 ตรวจพบยอดเงิน ${otherValue.toFixed(2)} USDT ในบัญชี ${otherType} — กรุณาโอนเงินเข้าบัญชี ${marketType} เพื่อเริ่มเทรด`;
+              }
+            }
+          } catch (diagErr) {}
+
           await prisma.aILogStream.create({
             data: {
               botConfigId,
               step: 'TASK_CHECK',
-              content: `⚠️ ยอดเงินไม่พอ: ต้องการ ${amount} USDT แต่มีเพียง ${freeBalance.toFixed(2)} ${detectedAsset} (${symbol})`,
+              content: diagnosticMsg,
               status: 'FAILED'
             }
           });

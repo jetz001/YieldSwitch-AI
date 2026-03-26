@@ -208,21 +208,26 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                   // Bitget CCXT transfer: (code, amount, from, to, params)
                   await otherClient.transfer(detectedAsset, amount, fromType, toType);
                 } catch (firstTryErr) {
-                  // Handle 404 (Not Found) or 40404 (Business Not Found)
-                  if (firstTryErr.message.includes('404')) {
-                    console.log('[AutoTransfer] V2 label failed, falling back to legacy mix label...');
+                  // Fallback for Demo/Legacy labels
+                  if (firstTryErr.message && String(firstTryErr.message).includes('404')) {
                     const legacyFrom = otherType.toLowerCase() === 'spot' ? 'spot' : 'mix';
                     const legacyTo = (marketType === 'FUTURES' || marketType === 'MIXED') ? 'mix' : 'spot';
                     try {
                       await otherClient.transfer(detectedAsset, amount, legacyFrom, legacyTo);
                     } catch (legacyErr) {
-                      // Ultra-safe check for sandbox to avoid .includes issues
-                      const apiUrls = priceClient.urls?.api;
-                      const apiUrlString = typeof apiUrls === 'string' ? apiUrls : JSON.stringify(apiUrls || '');
-                      const isSandbox = apiUrlString.toLowerCase().includes('sandbox');
+                      // Ultra-safe check for sandbox
+                      const apiUrls = priceClient.urls || {};
+                      const apiUrlString = String(apiUrls.api || '');
+                      const isSandbox = apiUrlString.toLowerCase().indexOf('sandbox') !== -1;
                       
                       if (isSandbox) {
-                         throw new Error(`ระบบโอนเงินอัตโนมัติอาจไม่รองรับในโหมด Demo (Sandbox Backend 404) — กรุณาโอน ${amount} USDT เข้ากระเป๋า ${marketType} ด้วยตนเองครับ`);
+                         // Deactivate bot immediately for security
+                         await prisma.botConfig.update({
+                           where: { id: botConfigId },
+                           data: { isActive: false }
+                         });
+                         
+                         throw new Error(`[CRITICAL_BALANCE] ระบบโอนอัตโนมัติไม่รองรับในโหมด Demo — บอทหยุดทำงานชั่วคราวเพื่อให้คุณเติมเงินเข้ากระเป๋า ${marketType} ด้วยตนเองครับ`);
                       }
                       throw legacyErr;
                     }
@@ -233,7 +238,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                 
                 await logPhase(botConfigId, 'IMPLEMENT', `[Engine] ✅ Auto-Transfer สำเร็จ: ยอดเงินพร้อมสำหรับการเทรดแล้ว`);
                 
-                // Refresh balance for the primary client
+                // Refresh balance
                 const newBal = await priceClient.fetchBalance();
                 const nf1 = (newBal[detectedAsset] && typeof newBal[detectedAsset] === 'object') ? (newBal[detectedAsset].free || 0) : 0;
                 const nf2 = (newBal.free && newBal.free[detectedAsset]) || 0;
@@ -243,7 +248,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                     throw new Error(`Transfer appeared successful but ${marketType} balance is still ${freeBalance}`);
                 }
               } else {
-                // Fallback to warning if other account also insufficient
+                // Fallback to warning
                 let diagnosticMsg = `⚠️ ยอดเงินไม่พอในบัญชี ${marketType}: ต้องการ ${amount} USDT แต่มีเพียง ${freeBalance.toFixed(2)} ${detectedAsset} (${symbol})`;
                 if (otherValue > 0) {
                    diagnosticMsg += `\n💡 พบยอดเงินเพียง ${otherValue.toFixed(2)} USDT ในบัญชี ${otherType} (รวมแล้วก็ยังไม่พอ)`;
@@ -255,7 +260,22 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
             }
           } catch (diagErr) {
             console.error('[AutoTransfer] Failure:', diagErr.message);
-            await logPhase(botConfigId, 'TASK_CHECK', `⚠️ ยอดเงินไม่พอและระบบโอนอัตโนมัติขัดข้อง: ${diagErr.message}`);
+            
+            let finalMsg = `⚠️ ยอดเงินไม่พอและระบบโอนอัตโนมัติขัดข้อง: ${diagErr.message}`;
+            
+            // If it's paper trading and transfer failed, it's often a demo limit. 
+            // Better stop the bot to let the user know they need to intervene.
+            if (config.isPaperTrading || diagErr.message.includes('[CRITICAL_BALANCE]')) {
+               finalMsg = `🚨 บอทหยุดทำงาน: ระบบโอนเงินอัตโนมัติขัดข้องในโหมด Demo — กรุณาเติมเงินเข้ากระเป๋า ${marketType} ด้วยตนเองครับ`;
+               await prisma.botConfig.update({
+                 where: { id: botConfigId },
+                 data: { isActive: false }
+               });
+               // Propagate error to main loop for cleanup
+               throw new Error(`[CRITICAL_BALANCE] ${finalMsg}`);
+            }
+
+            await logPhase(botConfigId, 'TASK_CHECK', finalMsg);
             continue;
           }
         }

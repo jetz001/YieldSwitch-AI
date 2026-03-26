@@ -1,4 +1,5 @@
 import { runCognitiveLoop } from './aiCognitiveDualLoop.js';
+import { checkZeroBalance } from './guards/balanceGuard.js';
 import { executeStrategy } from './executionGuard.js';
 import { syncState } from './executionGuard.js';
 import { checkGlobalCircuitBreaker, checkZombieGuard, tickMathGuard } from './mathGuard.js';
@@ -43,7 +44,7 @@ export async function startEngine(botConfigId) {
         // §3 CIRCUIT BREAKER CHECK (every loop iteration)
         // ═══════════════════════════════════════════════
         const exchangeClient = getExchangeClient(config);
-        if (exchangeClient && config.allocatedPortfolioUsdt > 0) {
+        if (exchangeClient) {
           try {
             // Fetch balances from both spot and swap to get full equity picture
             let walletEquity = 0;
@@ -78,11 +79,40 @@ export async function startEngine(botConfigId) {
             const totalEquity = walletEquity + unrealizedPnlTotal;
             const riskThreshold = config.allocatedPortfolioUsdt * 0.85; // 15% drop
 
+            // Debug Log as AI Log for visibility
+            await logPhase(botConfigId, 'TASK_CHECK', `[Engine Guard] Equity: ${totalEquity.toFixed(2)} (Cash: ${walletEquity.toFixed(2)}, PNL: ${unrealizedPnlTotal.toFixed(2)})`);
+
+            // ═══════════════════════════════════════════════
+            // §3 ZERO BALANCE GUARD — Auto-stop if account empty
+            // ═══════════════════════════════════════════════
+            // Check specific balance for the bot's market type to ensure it stops if TRADING wallet is empty
+            let tradingBalance = 0;
+            const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
+            const targetAccType = (marketType === 'SPOT') ? 'spot' : 'swap'; 
+            
+            try {
+              const bal = await exchangeClient.fetchBalance({ type: targetAccType });
+              for (const coin of stablecoins) {
+                tradingBalance += parseFloat(bal.total?.[coin] || 0);
+              }
+            } catch (e) {
+              console.warn(`[Engine] Could not fetch specific balance for ${targetAccType}:`, e.message);
+              tradingBalance = walletEquity; // Fallback to total cash
+            }
+
+            // §3 ZERO BALANCE GUARD — Auto-stop if account empty
+            const triggered = await checkZeroBalance(exchangeClient, botConfigId, config, walletEquity, unrealizedPnlTotal, marketType);
+            if (triggered) {
+              activeLoops.delete(botConfigId);
+              break;
+            }
+
             // Log details periodically (if equity is getting close or just for transparency)
             console.log(`[Engine Guard] Total Value: $${totalEquity.toFixed(2)} (Cash: $${walletEquity.toFixed(2)}, PNL: $${unrealizedPnlTotal.toFixed(2)}) | Breaker at: $${riskThreshold.toFixed(2)}`);
             
-            const breaker = await checkGlobalCircuitBreaker(botConfigId, totalEquity);
-            if (breaker) {
+            if (config.allocatedPortfolioUsdt > 0) {
+              const breaker = await checkGlobalCircuitBreaker(botConfigId, totalEquity);
+              if (breaker) {
               console.log(`[Engine] 🚨 CIRCUIT BREAKER TRIGGERED for ${botConfigId}. Equity ${totalEquity.toFixed(2)} vs Budget ${config.allocatedPortfolioUsdt}. Halting.`);
               
               // 1. Close all open positions on Exchange
@@ -116,10 +146,11 @@ export async function startEngine(botConfigId) {
               activeLoops.delete(botConfigId);
               break;
             }
-          } catch (balErr) {
-            console.warn('[Engine] Circuit Breaker balance check failed:', balErr.message);
           }
+        } catch (balErr) {
+          console.warn('[Engine] Circuit Breaker balance check failed:', balErr.message);
         }
+      }
 
         // ═══════════════════════════════════════════════
         // §3 BULK TICKER FETCH — Optimization for many positions
@@ -149,7 +180,11 @@ export async function startEngine(botConfigId) {
         // §3 ZOMBIE GUARD
         // ═══════════════════════════════════════════════
         if (exchangeClient) {
-          await checkZombieGuard(exchangeClient, botConfigId, tickerMap);
+          try {
+            await checkZombieGuard(exchangeClient, botConfigId, tickerMap);
+          } catch (zombieErr) {
+            console.warn(`[MathGuard] Zombie check failed for bot ${botConfigId}: ${zombieErr.message}`);
+          }
         }
 
         // ═══════════════════════════════════════════════
@@ -211,6 +246,11 @@ export async function startEngine(botConfigId) {
 
         
       } catch (error) {
+        if (error.message.includes('[CRITICAL_BALANCE]')) {
+          console.log(`[Engine] Stopping bot ${botConfigId} due to critical balance issue.`);
+          activeLoops.delete(botConfigId);
+          break; // Exit the loop
+        }
         console.error(`[Engine] Critical error in loop for ${botConfigId}:`, error);
         // Exponential backoff on error
         await new Promise(resolve => setTimeout(resolve, 60000));

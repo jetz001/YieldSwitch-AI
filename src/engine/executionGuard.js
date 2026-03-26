@@ -181,14 +181,12 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         }
         
         if (freeBalance < amount) {
-          let diagnosticMsg = `⚠️ ยอดเงินไม่พอในบัญชี ${marketType}: ต้องการ ${amount} USDT แต่มีเพียง ${freeBalance.toFixed(2)} ${detectedAsset} (${symbol})`;
-          
-          // Helper diagnosis: Check the 'other' account
+          // Diagnostic: check if funds exist in the "other" account
           try {
-            const otherClient = marketType === 'FUTURES' ? engineClientSpot : engineClientFutures;
+            const otherClient = marketType === 'FUTURES' || marketType === 'MIXED' ? engineClientSpot : engineClientFutures;
             if (otherClient) {
               const otherBal = await otherClient.fetchBalance();
-              const otherType = marketType === 'FUTURES' ? 'SPOT' : 'FUTURES';
+              const otherType = marketType === 'FUTURES' || marketType === 'MIXED' ? 'SPOT' : 'FUTURES';
               
               let otherValue = 0;
               for (const asset of possibleAssets) {
@@ -197,21 +195,44 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                 otherValue = Math.max(otherValue, parseFloat(f1), parseFloat(f2));
               }
               
-              if (otherValue > amount) {
-                diagnosticMsg += `\n💡 ตรวจพบยอดเงิน ${otherValue.toFixed(2)} USDT ในบัญชี ${otherType} — กรุณาโอนเงินเข้าบัญชี ${marketType} เพื่อเริ่มเทรด`;
+              if (otherValue >= amount) {
+                // AUTO-TRANSFER LOGIC
+                const fromType = otherType.toLowerCase() === 'spot' ? 'spot' : 'mix';
+                const toType = marketType.toLowerCase() === 'spot' ? 'spot' : 'mix';
+                
+                await logPhase(botConfigId, 'IMPLEMENT', `[Engine] ♻️ Auto-Transfer: กำลังโอนเงิน ${amount} ${detectedAsset} จาก ${otherType} ไปยัง ${marketType} อัตโนมัติ...`);
+                
+                // Bitget CCXT transfer: (code, amount, from, to, params)
+                // Note: 'mix' is the internal label for USDT-M Futures in Bitget
+                await otherClient.transfer(detectedAsset, amount, fromType, toType);
+                
+                await logPhase(botConfigId, 'IMPLEMENT', `[Engine] ✅ Auto-Transfer สำเร็จ: ยอดเงินพร้อมสำหรับการเทรดแล้ว`);
+                
+                // Refresh balance for the primary client
+                const newBal = await priceClient.fetchBalance();
+                const nf1 = (newBal[detectedAsset] && typeof newBal[detectedAsset] === 'object') ? (newBal[detectedAsset].free || 0) : 0;
+                const nf2 = (newBal.free && newBal.free[detectedAsset]) || 0;
+                freeBalance = Math.max(parseFloat(nf1), parseFloat(nf2));
+                
+                if (freeBalance < amount) {
+                    throw new Error(`Transfer appeared successful but ${marketType} balance is still ${freeBalance}`);
+                }
+              } else {
+                // Fallback to warning if other account also insufficient
+                let diagnosticMsg = `⚠️ ยอดเงินไม่พอในบัญชี ${marketType}: ต้องการ ${amount} USDT แต่มีเพียง ${freeBalance.toFixed(2)} ${detectedAsset} (${symbol})`;
+                if (otherValue > 0) {
+                   diagnosticMsg += `\n💡 พบยอดเงินเพียง ${otherValue.toFixed(2)} USDT ในบัญชี ${otherType} (รวมแล้วก็ยังไม่พอ)`;
+                }
+                
+                await logPhase(botConfigId, 'TASK_CHECK', diagnosticMsg);
+                continue;
               }
             }
-          } catch (diagErr) {}
-
-          await prisma.aILogStream.create({
-            data: {
-              botConfigId,
-              step: 'TASK_CHECK',
-              content: diagnosticMsg,
-              status: 'FAILED'
-            }
-          });
-          continue;
+          } catch (diagErr) {
+            console.error('[AutoTransfer] Failure:', diagErr.message);
+            await logPhase(botConfigId, 'TASK_CHECK', `⚠️ ยอดเงินไม่พอและระบบโอนอัตโนมัติขัดข้อง: ${diagErr.message}`);
+            continue;
+          }
         }
       } catch (balErr) {
         console.warn('[ExecGuard] Balance check failed, proceeding with caution:', balErr.message);

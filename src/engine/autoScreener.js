@@ -134,9 +134,11 @@ export async function runAutoScreener(exchangeClient) {
                           (analysis.rsi14 !== null && (analysis.rsi14 < 25 || analysis.rsi14 > 75));
 
         if (hasSignal) {
+          const lastCandle = ohlcv[ohlcv.length - 1];
           candidates.push({
             symbol: market.symbol, // Use the correct exchange symbol format
             originalSymbol: market.symbol.replace(/:USDT$/, '').replace(/:SUSDT$/, ''), // Strip settlement for AI readability
+            price: lastCandle ? parseFloat(lastCandle[4].toFixed(8)) : null,
             sector: getSectorForSymbol(market.symbol),
             timeframe: '1H',
             funding_rate: fundingRateDesc || 'Neutral',

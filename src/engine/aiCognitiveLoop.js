@@ -199,7 +199,14 @@ export async function runCognitiveLoop(botConfigId) {
     await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ ประยุกต์ใช้: นำกลยุทธ์ ${aiOutput.strategy} มาปรับค่าพารามิเตอร์สำหรับบอท (ความมั่นใจ ${aiOutput.confidence || 0}%)`);
     
     if (aiOutput.reasoning) {
-      await logPhase(botConfigId, 'PLAN', `[AI REASONING] ${aiOutput.reasoning}`);
+      const trades = aiOutput.trades || [];
+      const extraInfo = trades.map(t => {
+        const c = (candidates || []).find(cand => cand.symbol === t.symbol || cand.originalSymbol === t.symbol);
+        return `${t.symbol} (${t.side?.toUpperCase()})${c?.price ? ` @${c.price}` : ''}`;
+      }).join(', ');
+      
+      const content = `[AI REASONING] ${aiOutput.reasoning}${extraInfo ? ` -> แผน: ${extraInfo}` : ''}`;
+      await logPhase(botConfigId, 'PLAN', content);
     }
 
     const trades = aiOutput.trades || [];

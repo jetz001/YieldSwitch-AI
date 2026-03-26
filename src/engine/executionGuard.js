@@ -162,15 +162,20 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       // 2. Pre-trade Balance Guard
       try {
         const balance = await priceClient.fetchBalance();
+        
         // Bitget can return balance under USDT, SUSDT, or USDC depending on account type
         const possibleAssets = ['USDT', 'SUSDT', 'USDC'];
         let freeBalance = 0;
         let detectedAsset = 'USDT';
 
         for (const asset of possibleAssets) {
-          const amount = (balance[asset] && balance[asset].free) || 0;
-          if (amount > freeBalance) {
-            freeBalance = amount;
+          // Check both common CCXT formats: balance[asset].free and balance.free[asset]
+          const free1 = (balance[asset] && typeof balance[asset] === 'object') ? (balance[asset].free || 0) : 0;
+          const free2 = (balance.free && balance.free[asset]) || 0;
+          const currentFree = Math.max(parseFloat(free1), parseFloat(free2));
+          
+          if (currentFree > freeBalance) {
+            freeBalance = currentFree;
             detectedAsset = asset;
           }
         }

@@ -321,7 +321,8 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       }
 
       try {
-        await enterTWAPLimit(executionClient, mappedSymbol, side.toLowerCase(), amount, 'DIRECTIONAL', botConfigId);
+        const tpPrice = tpTiers && tpTiers[0] ? tpTiers[0].price : null;
+        await enterTWAPLimit(executionClient, mappedSymbol, side.toLowerCase(), amount, 'DIRECTIONAL', botConfigId, stopLossPrice, tpPrice);
       } catch (execErr) {
         if (execErr.name === 'InsufficientFunds' || execErr.message.includes('Insufficient balance') || execErr.message.includes('43012')) {
           await prisma.aILogStream.create({
@@ -343,8 +344,16 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
   }
 }
 
-async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId) {
+async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId, slPrice = null, tpPrice = null) {
   const params = { timeInForce: 'PO' };
+  
+  // Native TP/SL for Bitget V2 (Mapped by CCXT)
+  if (slPrice) {
+    params.stopLossPrice = slPrice;
+  }
+  if (tpPrice) {
+    params.takeProfitPrice = tpPrice;
+  }
   const ticker = await client.fetchTicker(symbol);
   
   if (ticker.bid && ticker.ask) {

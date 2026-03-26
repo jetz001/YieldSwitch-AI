@@ -1,4 +1,4 @@
-import { runCognitiveLoop } from './aiCognitiveLoop.js';
+import { runCognitiveLoop } from './aiCognitiveDualLoop.js';
 import { executeStrategy } from './executionGuard.js';
 import { syncState } from './executionGuard.js';
 import { checkGlobalCircuitBreaker, checkZombieGuard, tickMathGuard } from './mathGuard.js';

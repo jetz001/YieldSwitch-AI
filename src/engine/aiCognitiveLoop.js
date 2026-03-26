@@ -200,7 +200,11 @@ export async function runCognitiveLoop(botConfigId) {
     const implementDetails = trades.map(t => {
       const c = (candidates || []).find(cand => cand.symbol === t.symbol || cand.originalSymbol === t.symbol);
       const priceStr = c?.price ? `@${c.price}` : '';
-      return `${t.side === 'buy' ? 'ซื้อ' : 'ขาย'} ${t.symbol} ${priceStr}`;
+      let actionLabel = t.side === 'buy' ? 'ซื้อ' : 'ขาย';
+      if (marketType === 'FUTURES' || marketType === 'MIXED') {
+        actionLabel = t.side === 'buy' ? 'เปิด LONG' : 'เปิด SHORT';
+      }
+      return `${actionLabel} ${t.symbol} ${priceStr}`;
     }).join(', ');
 
     await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ กำลังประยุกต์ใช้แผน: ${implementDetails || aiOutput.strategy} (ความมั่นใจ ${aiOutput.confidence || 0}%)`);

@@ -196,7 +196,7 @@ export async function runCognitiveLoop(botConfigId) {
       throw new Error(`AI JSON Parsing Failed: ${parseErr.message} | Context: ${cleanedRaw.substring(0, 100)}...`);
     }
 
-    const trades = aiOutput.trades || [];
+    let trades = aiOutput.trades || [];
     const implementDetails = trades.map(t => {
       const c = (candidates || []).find(cand => cand.symbol === t.symbol || cand.originalSymbol === t.symbol);
       const priceStr = c?.price ? `@${c.price}` : '';
@@ -216,7 +216,7 @@ export async function runCognitiveLoop(botConfigId) {
       await logPhase(botConfigId, 'PLAN', content);
     }
 
-    const trades = aiOutput.trades || [];
+    trades = aiOutput.trades || [];
     const tradeSymbols = trades.map(t => t.symbol).join(', ');
     const logMsg = trades.length > 0
       ? `[3. TASK CHECK] 📋 ติดตามแผน: เตรียมส่งคำสั่งซื้อจำนวน ${trades.length} รายการ (${tradeSymbols}) และเริ่มตรวจสอบสถานะการทำงานจริง`

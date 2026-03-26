@@ -206,7 +206,7 @@ export async function runCognitiveLoop(botConfigId) {
     await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ กำลังประยุกต์ใช้แผน: ${implementDetails || aiOutput.strategy} (ความมั่นใจ ${aiOutput.confidence || 0}%)`);
     
     if (aiOutput.reasoning) {
-      const trades = aiOutput.trades || [];
+      trades = aiOutput.trades || [];
       const extraInfo = trades.map(t => {
         const c = (candidates || []).find(cand => cand.symbol === t.symbol || cand.originalSymbol === t.symbol);
         return `${t.symbol} (${t.side?.toUpperCase()})${c?.price ? ` @${c.price}` : ''}`;

@@ -208,11 +208,19 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                   // Bitget CCXT transfer: (code, amount, from, to, params)
                   await otherClient.transfer(detectedAsset, amount, fromType, toType);
                 } catch (firstTryErr) {
+                  // Handle 404 (Not Found) or 40404 (Business Not Found)
                   if (firstTryErr.message.includes('404')) {
                     console.log('[AutoTransfer] V2 label failed, falling back to legacy mix label...');
                     const legacyFrom = otherType.toLowerCase() === 'spot' ? 'spot' : 'mix';
                     const legacyTo = (marketType === 'FUTURES' || marketType === 'MIXED') ? 'mix' : 'spot';
-                    await otherClient.transfer(detectedAsset, amount, legacyFrom, legacyTo);
+                    try {
+                      await otherClient.transfer(detectedAsset, amount, legacyFrom, legacyTo);
+                    } catch (legacyErr) {
+                      if (priceClient.urls && priceClient.urls.api && priceClient.urls.api.includes('sandbox')) {
+                         throw new Error(`ระบบโอนเงินอัตโนมัติอาจไม่รองรับในโหมด Demo (Sandbox Backend 404) — กรุณาโอน ${amount} USDT เข้ากระเป๋า ${marketType} ด้วยตนเองครับ`);
+                      }
+                      throw legacyErr;
+                    }
                   } else {
                     throw firstTryErr;
                   }

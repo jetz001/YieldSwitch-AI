@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { calculateMaxLeverage } from './mathGuard.js';
+import { calculateSLPrice, calculateTPTiers } from '../utils/priceMath.js';
 
 const prisma = new PrismaClient();
 
@@ -194,6 +195,9 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       const ticker = await priceClient.fetchTicker(mappedSymbol);
       const entryPrice = side?.toLowerCase() === 'buy' ? ticker.ask : ticker.bid;
 
+      const stopLossPrice = calculateSLPrice(entryPrice, side, stopLossPercent);
+      const tpTiers = calculateTPTiers(entryPrice, side, stopLossPercent);
+
       await prisma.activeTranche.create({
         data: {
           botConfigId,
@@ -206,7 +210,9 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
           originalAmount: amount,
           remainingAmount: amount,
           isPaperTrade: config.isPaperTrading || isShadowMode, 
-          sector: sector || 'OTHER'
+          sector: sector || 'OTHER',
+          stopLossPrice,
+          tpTiers: tpTiers ? JSON.stringify(tpTiers) : null
         }
       });
 

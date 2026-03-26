@@ -218,7 +218,17 @@ export async function runCognitiveLoop(botConfigId) {
           if (sideLabel === 'SELL') sideLabel = 'SHORT';
           if (sideLabel === 'BUY') sideLabel = 'LONG';
         }
-        return `${t.symbol} (${sideLabel})${c?.price ? ` @${c.price}` : ''}`;
+        const entryPrice = c?.price || 0;
+        const slPrice = calculateSLPrice(entryPrice, t.side, t.stopLossPercent);
+        const tpTiers = calculateTPTiers(entryPrice, t.side, t.stopLossPercent);
+        const tp1Price = tpTiers?.tp1?.price;
+
+        let slTpStr = '';
+        if (entryPrice && slPrice && tp1Price) {
+          slTpStr = ` SL:${slPrice.toFixed(4)} TP:${tp1Price.toFixed(4)}`;
+        }
+
+        return `${t.symbol} (${sideLabel})${entryPrice ? ` @${entryPrice}` : ''}${slTpStr}`;
       }).join(', ');
       
       const content = `[AI REASONING] ${aiOutput.reasoning}${extraInfo ? ` -> แผน: ${extraInfo}` : ''}`;

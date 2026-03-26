@@ -64,6 +64,12 @@ export async function runCognitiveLoop(botConfigId) {
       .trim();
     
     // §6 Stateless Context Injection (LLM JSON Payload)
+    // Transform candidates to use originalSymbol for AI readability
+    const candidatesForAI = candidates.slice(0, 3).map(c => ({
+      ...c,
+      symbol: c.originalSymbol || c.symbol // Use originalSymbol if available, fallback to symbol
+    }));
+    
     const contextPayload = {
       system_directive: "Evaluate candidates. Use strategy (Directional, Deep Value, Vol Breakout, SMC, or Delta-Neutral). Sell: TP1 1.5R (25%), TP2 3.0R (25%), Runner 50% + Trailing SL. Set stopLossPercent & sector.",
       trading_env: { 
@@ -76,7 +82,7 @@ export async function runCognitiveLoop(botConfigId) {
         fng_idx: fearGreed 
       },
       portfolio_exp: portfolioExposure,
-      candidates: candidates.slice(0, 3) 
+      candidates: candidatesForAI
     };
 
     const { client: llmClient, model: llmModel, provider: aiProvider } = getLLMClient(
@@ -198,7 +204,7 @@ export async function runCognitiveLoop(botConfigId) {
 
     await logPhase(botConfigId, 'TASK_CHECK', `[3. TASK CHECK] 📋 ติดตามแผน: เตรียมส่งคำสั่งซื้อจำนวน ${(aiOutput.trades || []).length} รายการ และเริ่มตรวจสอบสถานะการทำงานจริง`);
 
-    return { status: 'SUCCESS', aiTasks: aiOutput };
+    return { status: 'SUCCESS', aiTasks: aiOutput, candidates: candidates };
   } catch (error) {
     console.error('AI Cognitive Loop Error:', error);
     const isQuotaError = error.message?.includes('429') || error.message?.includes('RESOURCE_EXHAUSTED');

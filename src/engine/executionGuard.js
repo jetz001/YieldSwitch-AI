@@ -3,6 +3,58 @@ import { calculateMaxLeverage } from './mathGuard';
 
 const prisma = new PrismaClient();
 
+/**
+ * Map symbol to correct Bitget format
+ * Handles futures symbols that need settlement currency suffix
+ */
+function mapSymbolForExchange(symbol, marketType, client) {
+  try {
+    if (!symbol || !client || !client.markets) {
+      return symbol;
+    }
+    
+    // For futures/swaps, check if we need to add settlement currency
+    if (marketType === 'FUTURES' || marketType === 'MIXED') {
+      // Check if the exact symbol exists
+      if (client.markets[symbol]) {
+        return symbol;
+      }
+      
+      // Try to find the correct futures symbol by adding settlement currency
+      const baseSymbol = symbol.split('/')[0];
+      const quoteSymbol = symbol.split('/')[1];
+      
+      // Common patterns to try
+      const variations = [
+        `${baseSymbol}/${quoteSymbol}:${quoteSymbol}`, // SETH/SUSDT:SUSDT
+        `${baseSymbol}/${quoteSymbol}:${baseSymbol}`,   // Some exchanges use base as settlement
+      ];
+      
+      for (const variation of variations) {
+        if (client.markets[variation]) {
+          console.log(`[SymbolMapper] Mapped ${symbol} -> ${variation}`);
+          return variation;
+        }
+      }
+      
+      // If no exact match found, try to find any market with this base/quote
+      const markets = Object.keys(client.markets).filter(m => 
+        m.startsWith(`${baseSymbol}/${quoteSymbol}`)
+      );
+      
+      if (markets.length > 0) {
+        console.log(`[SymbolMapper] Found alternative ${symbol} -> ${markets[0]}`);
+        return markets[0];
+      }
+    }
+    
+    return symbol;
+  } catch (error) {
+    console.warn('[SymbolMapper] Error mapping symbol:', error.message);
+    return symbol;
+  }
+}
+
 function extractMarketTypeFromDirectives(directives) {
   const text = String(directives || '');
   // Marker written by Dashboard, e.g. [[MARKET_TYPE=SPOT]]
@@ -19,7 +71,39 @@ function extractMarketTypeFromDirectives(directives) {
 /**
  * Execution Guard - Master Prompt
  */
-export async function executeStrategy(engineClientSpot, engineClientFutures, tasks, botConfigId) {
+/**
+ * Map AI-generated symbol back to correct exchange symbol using candidates data
+ */
+function mapAISymbolToExchange(aiSymbol, candidates, marketType, client) {
+  try {
+    if (!aiSymbol || !client || !client.markets) {
+      return aiSymbol;
+    }
+    
+    // First check if AI symbol exists directly on exchange
+    if (client.markets[aiSymbol]) {
+      return aiSymbol;
+    }
+    
+    // Look for symbol in candidates to find the correct exchange symbol
+    const candidate = candidates.find(c => 
+      (c.originalSymbol === aiSymbol) || (c.symbol === aiSymbol)
+    );
+    
+    if (candidate && candidate.symbol) {
+      console.log(`[SymbolMapper] AI symbol ${aiSymbol} mapped to exchange symbol ${candidate.symbol}`);
+      return candidate.symbol;
+    }
+    
+    // Fallback to original mapping function
+    return mapSymbolForExchange(aiSymbol, marketType, client);
+  } catch (error) {
+    console.warn('[SymbolMapper] Error mapping AI symbol:', error.message);
+    return aiSymbol;
+  }
+}
+
+export async function executeStrategy(engineClientSpot, engineClientFutures, tasks, botConfigId, candidates = []) {
   try {
     const config = await prisma.botConfig.findUnique({ 
       where: { id: botConfigId },
@@ -70,13 +154,16 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         continue;
       }
 
-      const ticker = await priceClient.fetchTicker(symbol);
+      // Map AI-generated symbol to correct exchange symbol
+      const mappedSymbol = mapAISymbolToExchange(symbol, candidates, marketType, priceClient);
+      const ticker = await priceClient.fetchTicker(mappedSymbol);
       const entryPrice = side?.toLowerCase() === 'buy' ? ticker.ask : ticker.bid;
 
       await prisma.activeTranche.create({
         data: {
           botConfigId,
-          symbol,
+          symbol: mappedSymbol, // Use mapped symbol for trading
+          originalSymbol: symbol, // Keep original symbol for reference
           side: side.toUpperCase(),
           status: 'OPEN',
           trancheGroupId: `${isShadowMode ? 'shadow' : 'trade'}-${Date.now()}`,
@@ -93,7 +180,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         data: {
           botConfigId,
           step: 'IMPLEMENT',
-          content: `Signal ${side.toUpperCase()} ${symbol}: ${modeLabel} (${confidence}%)`,
+          content: `Signal ${side.toUpperCase()} ${mappedSymbol} (${symbol}): ${modeLabel} (${confidence}%)`,
           status: 'SUCCESS'
         }
       });
@@ -114,12 +201,12 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         const maxLev = calculateMaxLeverage(stopLossPercent);
         const safeLeverage = Math.max(1, Math.floor(maxLev));
         try {
-          await engineClientFutures.setMarginMode('isolated', symbol);
-          await engineClientFutures.setLeverage(safeLeverage, symbol);
+          await engineClientFutures.setMarginMode('isolated', mappedSymbol);
+          await engineClientFutures.setLeverage(safeLeverage, mappedSymbol);
         } catch (e) {}
       }
 
-      await enterTWAPLimit(executionClient, symbol, side.toLowerCase(), amount, 'DIRECTIONAL', botConfigId);
+      await enterTWAPLimit(executionClient, mappedSymbol, side.toLowerCase(), amount, 'DIRECTIONAL', botConfigId);
     }
   } catch (error) {
     console.error('ExecutionGuard Error:', error);

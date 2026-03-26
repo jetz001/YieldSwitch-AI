@@ -144,14 +144,21 @@ export async function tickMathGuard(exchangeClient, tranche) {
     const ticker = await exchangeClient.fetchTicker(tranche.symbol);
     const currentPrice = ticker.last;
 
-    // Track Highest/Lowest for Trailing
-    let newHighestPrice = tranche.highestPriceReached;
-    if (tranche.side === 'LONG' && currentPrice > newHighestPrice) newHighestPrice = currentPrice;
-    else if (tranche.side === 'SHORT' && currentPrice < newHighestPrice) newHighestPrice = currentPrice;
+    // Track Highest/Lowest for Trailing - defensive checks
+    let currentHighest = parseFloat(tranche.highestPriceReached) || 0;
+    if (tranche.side === 'LONG' && currentPrice > currentHighest) {
+      currentHighest = currentPrice;
+    } else if (tranche.side === 'SHORT' && currentPrice < currentHighest) {
+      currentHighest = currentPrice;
+    }
 
-    if (newHighestPrice !== tranche.highestPriceReached) {
-      await prisma.activeTranche.update({ where: { id: tranche.id }, data: { highestPriceReached: newHighestPrice } });
-      tranche.highestPriceReached = newHighestPrice;
+    // Only update if there's a meaningful change
+    if (Math.abs(currentHighest - parseFloat(tranche.highestPriceReached || 0)) > 0.001) {
+      await prisma.activeTranche.update({ 
+        where: { id: tranche.id }, 
+        data: { highestPriceReached: currentHighest } 
+      });
+      tranche.highestPriceReached = currentHighest;
     }
 
     // Dynamic TP Scaling Logic
@@ -202,6 +209,12 @@ export async function tickMathGuard(exchangeClient, tranche) {
 
     return 'NO_ACTION';
   } catch (error) {
+    // Handle rate limiting specifically
+    if (error.message && error.message.includes('429')) {
+      console.warn('[MathGuard] Rate limited by Bitget API - backing off');
+      return 'RATE_LIMITED';
+    }
+    
     console.error('Math Guard Error:', error);
     return 'ERROR';
   }

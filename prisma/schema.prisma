@@ -21,6 +21,7 @@ model ActiveTranche {
   id                  String        @id @default(uuid())
   botConfigId         String
   symbol              String
+  originalSymbol      String?       // Original AI-generated symbol before mapping
   side                String
   status              TrancheStatus @default(OPEN)
   trancheGroupId      String

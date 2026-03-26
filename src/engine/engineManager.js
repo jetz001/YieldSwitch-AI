@@ -130,12 +130,25 @@ export async function startEngine(botConfigId) {
         // ═══════════════════════════════════════════════
         // §3 MATH GUARD TICK — TP Scaling & Trailing Stops
         // ═══════════════════════════════════════════════
+        let nextSleepMs = 300000; // Default cooldown: 5 minutes
+        
         if (exchangeClient) {
           const openTranches = await prisma.activeTranche.findMany({
             where: { botConfigId, status: 'OPEN' }
           });
+          
+          let rateLimitedCount = 0;
           for (const tranche of openTranches) {
-            await tickMathGuard(exchangeClient, tranche);
+            const result = await tickMathGuard(exchangeClient, tranche);
+            if (result === 'RATE_LIMITED') {
+              rateLimitedCount++;
+            }
+          }
+          
+          // If we hit rate limits, back off for longer period
+          if (rateLimitedCount > 0) {
+            console.warn(`[Engine] Rate limited on ${rateLimitedCount}/${openTranches.length} positions - extending backoff`);
+            nextSleepMs = Math.max(nextSleepMs, 300000); // 5 minutes minimum
           }
         }
 
@@ -143,9 +156,6 @@ export async function startEngine(botConfigId) {
         // AI COGNITIVE LOOP — Plan phase
         // ═══════════════════════════════════════════════
         const cycleResult = await runCognitiveLoop(botConfigId);
-        
-        // Default cooldown: 5 minutes
-        let nextSleepMs = 300000;
 
         if (cycleResult && cycleResult.status === 'SUCCESS' && cycleResult.aiTasks) {
           if (config.User) {
@@ -161,8 +171,8 @@ export async function startEngine(botConfigId) {
               bitgetFutures = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'FUTURES');
             }
             
-            // Execute the plan
-            await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId);
+            // Execute the plan with candidates for symbol mapping
+            await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId, cycleResult.candidates || []);
           }
         } else if (cycleResult && cycleResult.errorType === 'QUOTA') {
           // If Quota exhausted, back off for 10 minutes

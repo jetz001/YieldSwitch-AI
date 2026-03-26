@@ -92,6 +92,25 @@ export default function Dashboard() {
   };
 
   const handleToggleBot = async (field, value) => {
+    // Confirmation dialogs for critical actions
+    let confirmMessage = "";
+    if (field === 'isPaperTrading') {
+      confirmMessage = value 
+        ? "คุณต้องการสลับเป็นโหมดจำลอง (Paper Trading) ใช่หรือไม่?\n(ระบบจะใช้เงินจำลองในการเทรด)" 
+        : "คำเตือน! คุณกำลังจะสลับเป็นโหมดเทรดจริง (Live Trading)\nคุณต้องการดำเนินการต่อใช่หรือไม่?";
+    } else if (field === 'isActive') {
+      confirmMessage = value
+        ? "คุณต้องการเริ่มการทำงาน AutoPilot ใช่หรือไม่?"
+        : "คุณต้องการหยุดการทำงาน AutoPilot ใช่หรือไม่?";
+    } else if (field === 'aiDirectives' && typeof value === 'string' && value.includes('MARKET_TYPE')) {
+      const type = value.match(/MARKET_TYPE=(SPOT|FUTURES|MIXED)/i)?.[1];
+      confirmMessage = `คุณต้องการสลับโหมดตลาดเป็น ${type} ใช่หรือไม่?`;
+    }
+
+    if (confirmMessage && !window.confirm(confirmMessage)) {
+      return;
+    }
+
     setIsToggling(true);
     try {
       const payload = typeof field === 'object' ? field : { [field]: value };

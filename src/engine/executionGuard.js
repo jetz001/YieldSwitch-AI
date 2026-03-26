@@ -216,12 +216,17 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         }
       });
 
+      let actionLabel = side.toUpperCase();
+      if (marketType === 'FUTURES' || marketType === 'MIXED') {
+        actionLabel = actionLabel === 'SELL' ? 'SHORT' : 'LONG';
+      }
+
       const modeLabel = isShadowMode ? 'Shadow (Sim)' : (config.isPaperTrading ? 'Demo (Bitget)' : 'Live (Bitget)');
       await prisma.aILogStream.create({
         data: {
           botConfigId,
           step: 'IMPLEMENT',
-          content: `Signal ${side.toUpperCase()} ${mappedSymbol} (${symbol}): ${modeLabel} (${confidence}%)`,
+          content: `Signal ${actionLabel} ${mappedSymbol} (${symbol}): ${modeLabel} (${confidence}%)`,
           status: 'SUCCESS'
         }
       });
@@ -301,11 +306,16 @@ async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId
       await client.createLimitOrder(symbol, side, amountCoins, safeLimit, params);
       
       if (botConfigId) {
+        let actionLabel = side === 'buy' ? 'ซื้อ' : 'ขาย';
+        if (marketType === 'FUTURES' || marketType === 'MIXED') {
+          actionLabel = side === 'buy' ? 'เปิด LONG' : 'เปิด SHORT';
+        }
+        
         await prisma.aILogStream.create({
           data: {
             botConfigId,
             step: 'IMPLEMENT',
-            content: `[Engine] ✅ วางคำสั่ง${side === 'buy' ? 'ซื้อ' : 'ขาย'} ${symbol} เรียบร้อยแล้วที่ราคา ${safeLimit.toFixed(6)} (TWAP Chunk)`,
+            content: `[Engine] ✅ วางคำสั่ง${actionLabel} ${symbol} เรียบร้อยแล้วที่ราคา ${safeLimit.toFixed(6)} (TWAP Chunk)`,
             status: 'SUCCESS'
           }
         });
@@ -318,11 +328,16 @@ async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId
     await client.createLimitOrder(symbol, side, amountCoins, safeLimit, params);
     
     if (botConfigId) {
+      let actionLabel = side === 'buy' ? 'ซื้อ' : 'ขาย';
+      if (marketType === 'FUTURES' || marketType === 'MIXED') {
+        actionLabel = side === 'buy' ? 'เปิด LONG' : 'เปิด SHORT';
+      }
+      
       await prisma.aILogStream.create({
         data: {
           botConfigId,
           step: 'IMPLEMENT',
-          content: `[Engine] ✅ วางคำสั่ง${side === 'buy' ? 'ซื้อ' : 'ขาย'} ${symbol} เรียบร้อยแล้วที่ราคา ${safeLimit.toFixed(6)}`,
+          content: `[Engine] ✅ วางคำสั่ง${actionLabel} ${symbol} เรียบร้อยแล้วที่ราคา ${safeLimit.toFixed(6)}`,
           status: 'SUCCESS'
         }
       });

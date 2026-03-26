@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { calculateMaxLeverage } from './mathGuard.js';
 import { calculateSLPrice, calculateTPTiers } from '../utils/priceMath.js';
+import { logPhase } from './aiBase.js';
 
 const prisma = new PrismaClient();
 
@@ -197,14 +198,25 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
               
               if (otherValue >= amount) {
                 // AUTO-TRANSFER LOGIC
-                const fromType = otherType.toLowerCase() === 'spot' ? 'spot' : 'mix';
-                const toType = marketType.toLowerCase() === 'spot' ? 'spot' : 'mix';
+                // In Bitget V2, 'usdt-margined' is the standard label for USDT-M Futures (Mix)
+                const fromType = otherType.toLowerCase() === 'spot' ? 'spot' : 'usdt-margined';
+                const toType = (marketType === 'FUTURES' || marketType === 'MIXED') ? 'usdt-margined' : 'spot';
                 
                 await logPhase(botConfigId, 'IMPLEMENT', `[Engine] ♻️ Auto-Transfer: กำลังโอนเงิน ${amount} ${detectedAsset} จาก ${otherType} ไปยัง ${marketType} อัตโนมัติ...`);
                 
-                // Bitget CCXT transfer: (code, amount, from, to, params)
-                // Note: 'mix' is the internal label for USDT-M Futures in Bitget
-                await otherClient.transfer(detectedAsset, amount, fromType, toType);
+                try {
+                  // Bitget CCXT transfer: (code, amount, from, to, params)
+                  await otherClient.transfer(detectedAsset, amount, fromType, toType);
+                } catch (firstTryErr) {
+                  if (firstTryErr.message.includes('404')) {
+                    console.log('[AutoTransfer] V2 label failed, falling back to legacy mix label...');
+                    const legacyFrom = otherType.toLowerCase() === 'spot' ? 'spot' : 'mix';
+                    const legacyTo = (marketType === 'FUTURES' || marketType === 'MIXED') ? 'mix' : 'spot';
+                    await otherClient.transfer(detectedAsset, amount, legacyFrom, legacyTo);
+                  } else {
+                    throw firstTryErr;
+                  }
+                }
                 
                 await logPhase(botConfigId, 'IMPLEMENT', `[Engine] ✅ Auto-Transfer สำเร็จ: ยอดเงินพร้อมสำหรับการเทรดแล้ว`);
                 

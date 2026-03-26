@@ -293,12 +293,34 @@ async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId
       const safeLimit = side === 'buy' ? freshTicker.bid : freshTicker.ask;
       const amountCoins = chunkUsdt / safeLimit;
       await client.createLimitOrder(symbol, side, amountCoins, safeLimit, params);
+      
+      if (botConfigId) {
+        await prisma.aILogStream.create({
+          data: {
+            botConfigId,
+            step: 'IMPLEMENT',
+            content: `[Engine] ✅ วางคำสั่ง${side === 'buy' ? 'ซื้อ' : 'ขาย'} ${symbol} เรียบร้อยแล้วที่ราคา ${safeLimit.toFixed(6)} (TWAP Chunk)`,
+            status: 'SUCCESS'
+          }
+        });
+      }
       await new Promise(r => setTimeout(r, 2000));
     }
   } else {
     const safeLimit = side === 'buy' ? ticker.bid : ticker.ask;
     const amountCoins = valueUsdt / safeLimit;
     await client.createLimitOrder(symbol, side, amountCoins, safeLimit, params);
+    
+    if (botConfigId) {
+      await prisma.aILogStream.create({
+        data: {
+          botConfigId,
+          step: 'IMPLEMENT',
+          content: `[Engine] ✅ วางคำสั่ง${side === 'buy' ? 'ซื้อ' : 'ขาย'} ${symbol} เรียบร้อยแล้วที่ราคา ${safeLimit.toFixed(6)}`,
+          status: 'SUCCESS'
+        }
+      });
+    }
   }
 }
 

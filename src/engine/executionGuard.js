@@ -216,7 +216,12 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                     try {
                       await otherClient.transfer(detectedAsset, amount, legacyFrom, legacyTo);
                     } catch (legacyErr) {
-                      if (priceClient.urls && priceClient.urls.api && priceClient.urls.api.includes('sandbox')) {
+                      // Ultra-safe check for sandbox to avoid .includes issues
+                      const apiUrls = priceClient.urls?.api;
+                      const apiUrlString = typeof apiUrls === 'string' ? apiUrls : JSON.stringify(apiUrls || '');
+                      const isSandbox = apiUrlString.toLowerCase().includes('sandbox');
+                      
+                      if (isSandbox) {
                          throw new Error(`ระบบโอนเงินอัตโนมัติอาจไม่รองรับในโหมด Demo (Sandbox Backend 404) — กรุณาโอน ${amount} USDT เข้ากระเป๋า ${marketType} ด้วยตนเองครับ`);
                       }
                       throw legacyErr;

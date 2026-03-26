@@ -13,18 +13,19 @@ const activeLoops = new Map();
  * Master Prompt: Zero-Touch Autopilot — runs indefinitely with all guards active.
  */
 export async function startEngine(botConfigId) {
+  const loopId = Date.now().toString();
   if (activeLoops.has(botConfigId)) {
     console.log(`[Engine] Stopping existing loop for ${botConfigId} before restart...`);
-    stopEngine(botConfigId);
   }
 
-  console.log(`[Engine] Starting background loop for bot ${botConfigId}...`);
+  console.log(`[Engine] Starting background loop for bot ${botConfigId} (LoopID: ${loopId})...`);
+  activeLoops.set(botConfigId, loopId);
   
   const loop = async () => {
-    // Wait for the previous loop to truly exit if needed, but for simplicity we just proceed
-    // since stopEngine removes it from the map.
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    while (activeLoops.has(botConfigId)) {
+    // Wait slightly to allow previous loop checks to potentially clear
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    while (activeLoops.get(botConfigId) === loopId) {
       try {
         // Fetch fresh config to check if it's still active
         const config = await prisma.botConfig.findUnique({ 
@@ -32,9 +33,9 @@ export async function startEngine(botConfigId) {
           include: { User: true }
         });
 
-        if (!config || !config.isActive) {
-          console.log(`[Engine] Stopping bot ${botConfigId} (Reason: Inactive or deleted)`);
-          activeLoops.delete(botConfigId);
+        if (!config || !config.isActive || activeLoops.get(botConfigId) !== loopId) {
+          console.log(`[Engine] Stopping loop ${loopId} for bot ${botConfigId}`);
+          if (activeLoops.get(botConfigId) === loopId) activeLoops.delete(botConfigId);
           break;
         }
 
@@ -121,10 +122,34 @@ export async function startEngine(botConfigId) {
         }
 
         // ═══════════════════════════════════════════════
-        // §3 ZOMBIE GUARD (every loop iteration)
+        // §3 BULK TICKER FETCH — Optimization for many positions
+        // ═══════════════════════════════════════════════
+        let tickerMap = {};
+        if (exchangeClient) {
+          try {
+             // For Bitget V2, fetchTickers() without args fetches ALL tickers
+             const tickers = await exchangeClient.fetchTickers();
+             tickerMap = tickers;
+             
+             // Normalize mapping: also index by simple symbol (e.g. BTC/USDT) to catch mismatches
+             for (const sym in tickers) {
+               const simple = sym.split(':')[0];
+               if (!tickerMap[simple]) tickerMap[simple] = tickers[sym];
+             }
+             
+             if (Object.keys(tickerMap).length > 0) {
+               // console.log(`[Engine] Bulk fetched ${Object.keys(tickers).length} tickers`);
+             }
+          } catch (e) {
+             console.warn('[Engine] Bulk ticker fetch failed, fallback to per-asset fetching.', e.message);
+          }
+        }
+
+        // ═══════════════════════════════════════════════
+        // §3 ZOMBIE GUARD
         // ═══════════════════════════════════════════════
         if (exchangeClient) {
-          await checkZombieGuard(exchangeClient, botConfigId);
+          await checkZombieGuard(exchangeClient, botConfigId, tickerMap);
         }
 
         // ═══════════════════════════════════════════════
@@ -138,9 +163,10 @@ export async function startEngine(botConfigId) {
           });
           
           let rateLimitedCount = 0;
+          const hasTickerData = Object.keys(tickerMap || {}).length > 0;
           for (const tranche of openTranches) {
-            const result = await tickMathGuard(exchangeClient, tranche);
-            if (result === 'RATE_LIMITED') {
+            const result = await tickMathGuard(exchangeClient, tranche, tickerMap[tranche.symbol], hasTickerData);
+            if (result === 'RATE_LIMITED' || result === 'ERROR') {
               rateLimitedCount++;
             }
           }
@@ -148,7 +174,7 @@ export async function startEngine(botConfigId) {
           // If we hit rate limits, back off for longer period
           if (rateLimitedCount > 0) {
             console.warn(`[Engine] Rate limited on ${rateLimitedCount}/${openTranches.length} positions - extending backoff`);
-            nextSleepMs = Math.max(nextSleepMs, 300000); // 5 minutes minimum
+            nextSleepMs = Math.max(nextSleepMs, 300000); 
           }
         }
 

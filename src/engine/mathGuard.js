@@ -72,7 +72,7 @@ export async function checkSectorGuard(botConfigId, newAssetCategory) {
 /**
  * §3 Zombie Guard: If position open > 24h and PNL between -2% and +2%, auto-close
  */
-export async function checkZombieGuard(exchangeClient, botConfigId) {
+export async function checkZombieGuard(exchangeClient, botConfigId, tickerMap = null) {
   try {
     const tranches = await prisma.activeTranche.findMany({
       where: { botConfigId, status: 'OPEN' }
@@ -87,8 +87,13 @@ export async function checkZombieGuard(exchangeClient, botConfigId) {
       
       if (openDuration > TWENTY_FOUR_HOURS) {
         try {
-          const ticker = await exchangeClient.fetchTicker(tranche.symbol);
-          const currentPrice = ticker.last;
+          const ticker = tickerMap?.[tranche.symbol];
+          if (!ticker && tickerMap) {
+            // If tickerMap was provided but this symbol is missing, skip to avoid 429
+            continue;
+          }
+          const finalTicker = ticker || await exchangeClient.fetchTicker(tranche.symbol);
+          const currentPrice = finalTicker.last || finalTicker.close;
           const pnlPercent = ((currentPrice - tranche.entryPrice) / tranche.entryPrice) * 100;
           const adjustedPnl = tranche.side === 'SHORT' ? -pnlPercent : pnlPercent;
 
@@ -139,10 +144,11 @@ export async function checkZombieGuard(exchangeClient, botConfigId) {
 /**
  * §3 Dynamic TP Scaling tick loop
  */
-export async function tickMathGuard(exchangeClient, tranche) {
+export async function tickMathGuard(exchangeClient, tranche, providedTicker = null, hasTickerMap = false) {
   try {
-    const ticker = await exchangeClient.fetchTicker(tranche.symbol);
-    const currentPrice = ticker.last;
+    const ticker = providedTicker || (hasTickerMap ? null : await exchangeClient.fetchTicker(tranche.symbol));
+    if (!ticker) return 'SKIPPED'; // Skip if bulk map provided but symbol missing
+    const currentPrice = ticker.last || ticker.close;
 
     // Track Highest/Lowest for Trailing - defensive checks
     let currentHighest = parseFloat(tranche.highestPriceReached) || 0;

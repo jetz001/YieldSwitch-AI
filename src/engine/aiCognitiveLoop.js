@@ -209,7 +209,12 @@ export async function runCognitiveLoop(botConfigId) {
       trades = aiOutput.trades || [];
       const extraInfo = trades.map(t => {
         const c = (candidates || []).find(cand => cand.symbol === t.symbol || cand.originalSymbol === t.symbol);
-        return `${t.symbol} (${t.side?.toUpperCase()})${c?.price ? ` @${c.price}` : ''}`;
+        let sideLabel = t.side?.toUpperCase();
+        if (marketType === 'FUTURES' || marketType === 'MIXED') {
+          if (sideLabel === 'SELL') sideLabel = 'SHORT';
+          if (sideLabel === 'BUY') sideLabel = 'LONG';
+        }
+        return `${t.symbol} (${sideLabel})${c?.price ? ` @${c.price}` : ''}`;
       }).join(', ');
       
       const content = `[AI REASONING] ${aiOutput.reasoning}${extraInfo ? ` -> แผน: ${extraInfo}` : ''}`;

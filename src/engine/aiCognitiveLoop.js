@@ -202,7 +202,13 @@ export async function runCognitiveLoop(botConfigId) {
       await logPhase(botConfigId, 'PLAN', `[AI REASONING] ${aiOutput.reasoning}`);
     }
 
-    await logPhase(botConfigId, 'TASK_CHECK', `[3. TASK CHECK] 📋 ติดตามแผน: เตรียมส่งคำสั่งซื้อจำนวน ${(aiOutput.trades || []).length} รายการ และเริ่มตรวจสอบสถานะการทำงานจริง`);
+    const trades = aiOutput.trades || [];
+    const tradeSymbols = trades.map(t => t.symbol).join(', ');
+    const logMsg = trades.length > 0
+      ? `[3. TASK CHECK] 📋 ติดตามแผน: เตรียมส่งคำสั่งซื้อจำนวน ${trades.length} รายการ (${tradeSymbols}) และเริ่มตรวจสอบสถานะการทำงานจริง`
+      : `[3. TASK CHECK] 📋 ตรวจสอบสถานะ: ไม่พบโอกาสในการเทรดที่เหมาะสมในรอบนี้ กำลังติดตามตลาดต่อไป`;
+    
+    await logPhase(botConfigId, 'TASK_CHECK', logMsg);
 
     return { status: 'SUCCESS', aiTasks: aiOutput, candidates: candidates };
   } catch (error) {

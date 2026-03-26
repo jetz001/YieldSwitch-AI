@@ -154,6 +154,27 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         continue;
       }
 
+      // 2. Pre-trade Balance Guard
+      try {
+        const balance = await priceClient.fetchBalance();
+        const asset = marketType === 'SPOT' ? 'USDT' : 'USDT'; // Both use USDT for settlement usually
+        const freeBalance = (balance[asset] && balance[asset].free) || 0;
+        
+        if (freeBalance < amount) {
+          await prisma.aILogStream.create({
+            data: {
+              botConfigId,
+              step: 'TASK_CHECK',
+              content: `⚠️ ยอดเงินไม่พอ: ต้องการ ${amount} USDT แต่มีเพียง ${freeBalance.toFixed(2)} USDT (${symbol})`,
+              status: 'FAILED'
+            }
+          });
+          continue;
+        }
+      } catch (balErr) {
+        console.warn('[ExecGuard] Balance check failed, proceeding with caution:', balErr.message);
+      }
+
       // Map AI-generated symbol to correct exchange symbol
       const mappedSymbol = mapAISymbolToExchange(symbol, candidates, marketType, priceClient);
       const ticker = await priceClient.fetchTicker(mappedSymbol);
@@ -206,7 +227,22 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         } catch (e) {}
       }
 
-      await enterTWAPLimit(executionClient, mappedSymbol, side.toLowerCase(), amount, 'DIRECTIONAL', botConfigId);
+      try {
+        await enterTWAPLimit(executionClient, mappedSymbol, side.toLowerCase(), amount, 'DIRECTIONAL', botConfigId);
+      } catch (execErr) {
+        if (execErr.name === 'InsufficientFunds' || execErr.message.includes('Insufficient balance') || execErr.message.includes('43012')) {
+          await prisma.aILogStream.create({
+            data: {
+              botConfigId,
+              step: 'TASK_CHECK',
+              content: `🚨 ยอดเงินในบัญชีไม่เพียงพอสำหรับการเทรด ${mappedSymbol}: กรุณาตรวจสอบกระเป๋าเงินของคุณ`,
+              status: 'FAILED'
+            }
+          });
+        } else {
+          throw execErr; // Rethrow other errors to the main loop catch
+        }
+      }
     }
   } catch (error) {
     console.error('ExecutionGuard Error:', error);

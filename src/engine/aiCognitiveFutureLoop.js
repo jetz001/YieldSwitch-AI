@@ -4,9 +4,9 @@ export async function runCognitiveFutureLoop(botConfigId) {
   const context = await getContext(botConfigId, 'FUTURES');
   if (!context) return null;
 
-  const { config, candidates, bulletsAvailable, candidatesForAI, activePositionsForAI, portfolioExposure, fearGreed, btcTrend, llmInfo } = context;
+  const { config, candidates, bulletsAvailable, candidatesForAI, activePositionsForAI, openOrdersForAI, portfolioExposure, fearGreed, btcTrend, llmInfo } = context;
 
-  await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 Checking Market (FUTURES): ค้นหาโอกาสในตลาดและประเมินไม้ที่เปิดอยู่`);
+  await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 Checking Market (FUTURES): ค้นหาโอกาสในตลาด + ประเมินไม้ที่เปิดอยู่ + ออเดอร์ค้าง`);
 
   const rules = `
     You are an Elite Futures Quant. Response MUST be valid JSON.
@@ -16,6 +16,7 @@ export async function runCognitiveFutureLoop(botConfigId) {
     - Provide stopLossPercent. TP is auto-calculated.
     - Max Bullets: ${bulletsAvailable}.
     - Active positions: review 'active_positions'. If trend changed/high risk, add to 'close_positions' with ID and reason.
+    - Open orders: review 'open_orders'. If an order is no longer appropriate, add to 'cancel_orders' with ID and reason.
     - BE EXTREMELY CONCISE in reasoning (max 10 words).
     
     === OUTPUT ===
@@ -24,7 +25,8 @@ export async function runCognitiveFutureLoop(botConfigId) {
       "confidence": 0-100,
       "reasoning": "ไทยสั้นๆ",
       "trades": [{"symbol": "BTC/USDT", "side": "buy|sell", "amount": 500, "strategy": "DIRECTIONAL", "confidence": 85, "stopLossPercent": 3.5, "sector": "L1"}],
-      "close_positions": [{"id": "uuid", "reason": "ไทยสั้นๆ"}]
+      "close_positions": [{"id": "uuid", "reason": "ไทยสั้นๆ"}],
+      "cancel_orders": [{"id": "orderId", "reason": "ไทยสั้นๆ"}]
     }
   `;
 
@@ -33,6 +35,7 @@ export async function runCognitiveFutureLoop(botConfigId) {
     mkt_regime: { btc_trend: btcTrend, fng: fearGreed },
     portfolio: portfolioExposure,
     active_positions: activePositionsForAI,
+    open_orders: openOrdersForAI,
     candidates: candidatesForAI
   };
 

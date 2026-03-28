@@ -138,6 +138,29 @@ export async function startEngine(botConfigId) {
               bitgetSpot = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'SPOT');
               bitgetFutures = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'FUTURES');
             }
+
+            if (cycleResult.aiTasks?.cancel_orders && cycleResult.aiTasks.cancel_orders.length > 0) {
+              for (const ord of cycleResult.aiTasks.cancel_orders) {
+                const orderId = ord?.id;
+                if (!orderId) continue;
+                let cancelled = false;
+                try {
+                  await bitgetFutures.cancelOrder(orderId);
+                  cancelled = true;
+                } catch (e) {}
+                if (!cancelled) {
+                  try {
+                    await bitgetSpot.cancelOrder(orderId);
+                    cancelled = true;
+                  } catch (e) {}
+                }
+                if (cancelled) {
+                  await logPhase(botConfigId, 'TRIGGER', `🧠 AI Cancel Order: ${orderId} (เหตุผล: ${ord.reason || '-'})`);
+                } else {
+                  await logPhase(botConfigId, 'TRIGGER', `⚠️ AI Cancel Order Failed: ${orderId} (เหตุผล: ${ord.reason || '-'})`);
+                }
+              }
+            }
             
             await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId, cycleResult.candidates || []);
 

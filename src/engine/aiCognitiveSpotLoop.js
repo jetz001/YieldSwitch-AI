@@ -4,7 +4,7 @@ export async function runCognitiveSpotLoop(botConfigId) {
   const context = await getContext(botConfigId, 'SPOT');
   if (!context) return null;
 
-  const { config, candidates, bulletsAvailable, candidatesForAI, portfolioExposure, fearGreed, btcTrend, llmInfo } = context;
+  const { config, candidates, bulletsAvailable, candidatesForAI, openOrdersForAI, portfolioExposure, fearGreed, btcTrend, llmInfo } = context;
 
   await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 Checking Market (SPOT): ค้นหาโอกาสในตลาดสปอต`);
 
@@ -29,6 +29,7 @@ export async function runCognitiveSpotLoop(botConfigId) {
     trading_env: { bullets: bulletsAvailable, budget: config.allocatedPortfolioUsdt },
     mkt_regime: { btc_trend: btcTrend, fng: fearGreed },
     portfolio: portfolioExposure,
+    open_orders: openOrdersForAI,
     candidates: candidatesForAI
   };
 

@@ -33,7 +33,7 @@ export async function getContext(botConfigId, marketType) {
   const activePositionsForAI = openTranches.map(t => {
     const tpTiers = t.tpTiers ? JSON.parse(t.tpTiers) : null;
     return {
-      id: t.id.substring(0, 8), // Truncate ID to save tokens
+      id: t.id,
       symbol: t.symbol,
       side: t.side,
       entry: t.entryPrice,
@@ -41,6 +41,23 @@ export async function getContext(botConfigId, marketType) {
       tp: tpTiers?.tp1?.price || null
     };
   });
+
+  let openOrdersForAI = [];
+  try {
+    const openOrdersRaw = await bitgetClient.fetchOpenOrders();
+    openOrdersForAI = (openOrdersRaw || []).slice(0, 12).map(o => ({
+      id: o.id,
+      symbol: o.symbol,
+      side: o.side,
+      type: o.type,
+      price: o.price,
+      amount: o.amount,
+      remaining: o.remaining,
+      status: o.status
+    }));
+  } catch (e) {
+    openOrdersForAI = [];
+  }
 
   const portfolioExposure = openTranches.reduce((acc, t) => {
     const sector = getSectorForSymbol(t.symbol);
@@ -68,6 +85,7 @@ export async function getContext(botConfigId, marketType) {
     bulletsAvailable,
     candidatesForAI,
     activePositionsForAI,
+    openOrdersForAI,
     llmInfo: getLLMClient(config.User.aiApiKey, config.User.aiProvider || 'OPENAI', config.User.aiModel || 'gpt-4o', true)
   };
 }

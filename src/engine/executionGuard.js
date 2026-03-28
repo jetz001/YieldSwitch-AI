@@ -159,21 +159,7 @@ function checkMarketAvailability(client, symbol, marketType) {
  */
 async function checkRiskGuard(client, botConfigId, marketType, symbol) {
   try {
-    // 1. Max Open Positions Check (from DB)
-    const openTranchesCount = await prisma.activeTranche.count({
-      where: { botConfigId, status: 'OPEN' }
-    });
-
-    // Default max 5 positions to prevent "too many eggs in one basket"
-    const MAX_POSITIONS = 5; 
-    if (openTranchesCount >= MAX_POSITIONS) {
-      return { 
-        safe: false, 
-        reason: `🚨 REJECT: จำนวนไม้ที่เปิดอยู่ครบขีดจำกัดสูงสุด (${MAX_POSITIONS} ไม้) เพื่อป้องกันการสะสมไม้มากเกินไปและลดความเสี่ยงการโดน Liquidation ครับ` 
-      };
-    }
-
-    // 2. Margin Usage Check (only for Futures)
+    // Margin Usage Check (only for Futures)
     if (marketType === 'FUTURES') {
       const balance = await client.fetchBalance();
       
@@ -184,11 +170,11 @@ async function checkRiskGuard(client, botConfigId, marketType, symbol) {
       if (total > 0) {
         const marginUsagePercent = (used / total) * 100;
         
-        // Safety threshold: 60% of equity used as margin is already high for automated systems
-        if (marginUsagePercent > 60) {
+        // Safety threshold: 50% of futures equity used is already high for automated systems
+        if (marginUsagePercent > 50) {
            return { 
              safe: false, 
-             reason: `🚨 REJECT: อัตราการใช้ Margin สูงเกินไป (${marginUsagePercent.toFixed(1)}%): พอร์ตของคุณมีความเสี่ยงสูงต่อการโดน Liquidation หากเปิดไม้เพิ่มในขณะนี้ครับ` 
+             reason: `🚨 REJECT: การใช้เงินทุน Futures สูงเกินไป (${marginUsagePercent.toFixed(1)}%): พอร์ตของคุณมีความเสี่ยงสูงต่อการโดน Liquidation หากเปิด Position เพิ่มในขณะนี้ครับ` 
            };
         }
       }

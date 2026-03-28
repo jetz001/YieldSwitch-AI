@@ -157,7 +157,7 @@ function checkMarketAvailability(client, symbol, marketType) {
  * Risk Guard: Check if it's safe to open a new position
  * Prevents over-leveraging and liquidation risks
  */
-async function checkRiskGuard(client, botConfigId, marketType, symbol) {
+async function checkRiskGuard(client, botConfigId, marketType, _symbol) {
   try {
     // Margin Usage Check (only for Futures)
     if (marketType === 'FUTURES') {

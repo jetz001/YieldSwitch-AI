@@ -5,11 +5,11 @@ import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 
 export default function AdminDashboard() {
-  const { data: session } = useSession();
+  useSession();
   const [users, setUsers] = useState([]);
   const [logs, setLogs] = useState([]);
   const [stats, setStats] = useState({ totalUsers: 0, activeBots: 0, health: 98 });
-  const [isLoading, setIsLoading] = useState(true);
+  const [, setIsLoading] = useState(true);
 
   useEffect(() => {
     fetchAdminData();

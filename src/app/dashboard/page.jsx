@@ -243,9 +243,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
         {/* Main Column */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-8">
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+            ภาพรวมพอร์ต
+          </div>
           <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6 relative overflow-hidden">
             <h2 className="text-2xl font-bold text-white mb-2 font-thai">ระบบป้องกันทุน (The Capital Shield)</h2>
             <p className="text-sm text-slate-400 mb-8 font-thai">แสดงสถานะคุ้มทุนและการดึงกำไรกลับจากการเทรด {stats.isPaperTrading ? '(จำลอง)' : '(จริง)'}</p>
@@ -269,6 +272,9 @@ export default function Dashboard() {
           </div>
 
           {/* Wallet Assets Section */}
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+            กระเป๋าเงิน
+          </div>
           <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-2">
               <h2 className="text-xl font-bold text-white font-thai flex items-center gap-2">
@@ -347,9 +353,12 @@ export default function Dashboard() {
           </div>
 
           {/* Portfolio Tranche X-Ray */}
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+            Position
+          </div>
           <div className="bg-[#111827] border border-slate-800 rounded-2xl p-6">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold text-white font-thai">เอกซเรย์พอร์ตลงทุนรายไม้</h2>
+              <h2 className="text-xl font-bold text-white font-thai">Positions ที่เปิดอยู่</h2>
               <div className="flex items-center gap-2 text-teal-500 bg-teal-900/20 px-3 py-1 rounded text-[10px] font-bold tracking-widest uppercase border border-teal-900/50">
                 <Activity size={12} /> สุขภาพพอร์ต: {stats.portfolioHealth}%
               </div>
@@ -436,11 +445,17 @@ export default function Dashboard() {
           </div>
 
           {/* Order History */}
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+            ประวัติคำสั่ง
+          </div>
           <OrderHistoryCard />
         </div>
 
         {/* Right Column */}
-        <div className="space-y-6">
+        <div className="space-y-8 lg:border-l lg:border-slate-800 lg:pl-6">
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+            สรุปกำไร/ขาดทุน
+          </div>
           
           <div className="bg-teal-500/10 border border-teal-500/30 rounded-2xl p-6">
             <div className="flex justify-between items-start mb-2">
@@ -483,13 +498,17 @@ export default function Dashboard() {
             </div>
           </div>
 
-
-
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+            เป้าหมาย & คอนฟิก AI
+          </div>
           <TradingGoalCard 
             initialValue={stats.aiDirectives} 
             onSave={(val) => handleToggleBot('aiDirectives', val)} 
           />
 
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai">
+            AI Thought Console
+          </div>
           <CognitiveLogCard aiDirectives={stats.aiDirectives} />
         </div>
       </div>

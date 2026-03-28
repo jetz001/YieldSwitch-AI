@@ -14,25 +14,6 @@ function normalizeEntryAction(side, symbol = '') {
   return s.includes('BUY') ? 'BUY' : 'SELL';
 }
 
-function statusBadge(status) {
-  if (status === 'CLOSED') {
-    return {
-      label: 'CLOSED',
-      className: 'bg-teal-900/20 text-teal-400 border-teal-800/50'
-    };
-  }
-  if (status === 'CANCELLED') {
-    return {
-      label: 'CANCELLED',
-      className: 'bg-amber-900/20 text-amber-400 border-amber-800/50'
-    };
-  }
-  return {
-    label: status,
-    className: 'bg-slate-900/50 text-slate-400 border-slate-800/50'
-  };
-}
-
 export default function OrderHistoryCard() {
   const [statusFilter, setStatusFilter] = useState('CLOSED'); // CLOSED|CANCELLED|ALL
   const [rows, setRows] = useState([]);

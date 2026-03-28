@@ -12,7 +12,6 @@ export default function CognitiveLogCard({ aiDirectives }) {
       .trim();
   })();
   const [logs, setLogs] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('PLAN');
 
   useEffect(() => {
@@ -33,8 +32,6 @@ export default function CognitiveLogCard({ aiDirectives }) {
       }
     } catch (error) {
       console.log('Detailed AI Logs Fetch Error:', error.message || error);
-    } finally {
-      setIsLoading(false);
     }
   };
 

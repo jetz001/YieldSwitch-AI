@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server';
 
 const prisma = new PrismaClient();
 
-export async function GET(req) {
+export async function GET(_req) {
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -95,7 +95,7 @@ export async function POST(req) {
   }
 }
 
-export async function DELETE(req) {
+export async function DELETE(_req) {
   try {
     const session = await getServerSession(authOptions);
     if (!session) {

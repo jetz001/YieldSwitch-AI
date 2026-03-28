@@ -237,7 +237,7 @@ function checkTrigger(triggerSide, currentPrice, targetPrice) {
   return false;
 }
 
-async function scaleOut(exchangeClient, tranche, percent, tpLayer) {
+async function scaleOut(exchangeClient, tranche, percent, _tpLayer) {
   const sellAmount = tranche.originalAmount * percent;
   const orderSide = tranche.side === 'LONG' ? 'sell' : 'buy';
   

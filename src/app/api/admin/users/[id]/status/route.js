@@ -20,7 +20,7 @@ export async function PATCH(req, { params }) {
       return NextResponse.json({ error: 'Invalid status provided.' }, { status: 400 });
     }
 
-    const updatedUser = await prisma.user.update({
+    await prisma.user.update({
       where: { id },
       data: { status }
     });

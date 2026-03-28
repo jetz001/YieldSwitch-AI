@@ -29,7 +29,7 @@ export async function POST(req) {
       }
     }
 
-    const config = await prisma.botConfig.updateMany({
+    await prisma.botConfig.updateMany({
       where: { userId: session.user.id },
       data: {
         isActive: isActive !== undefined ? isActive : undefined,

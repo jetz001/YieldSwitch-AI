@@ -18,7 +18,7 @@ export const authOptions = {
         email: { label: "Email", type: "email", placeholder: "user@yieldswitch.ai" },
         password: { label: "Password", type: "password" }
       },
-      async authorize(credentials, req) {
+      async authorize(credentials, _req) {
         console.log('[Auth] Authorize call with:', credentials?.email);
         if (!credentials?.email || !credentials?.password) {
           return null

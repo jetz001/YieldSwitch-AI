@@ -9,7 +9,7 @@ import { initEngine } from '@/engine/engineManager';
 const prisma = new PrismaClient();
 let engineInitialized = false;
 
-export async function GET(req) {
+export async function GET(_req) {
   if (!engineInitialized) {
     console.log('[DEBUG] initEngine() triggered from /api/dashboard/stats');
     initEngine().catch(err => {
@@ -54,7 +54,6 @@ export async function GET(req) {
         const apiPass = isDemo ? config.User.bitgetDemoPassphrase : config.User.bitgetPassphrase;
         const bitgetClient = getBitgetClient(apiKey, apiSecret, apiPass, isDemo);
 
-        let totalEquityUsdt = 0;
         let walletAssetsValueUsdt = 0;
         let assetsMap = {};
 
@@ -93,8 +92,7 @@ export async function GET(req) {
         futureAssets.forEach(a => { if(stableSet.has(a.coin)) futureValueUsdt += a.total; });
         
         walletAssetsValueUsdt = spotValueUsdt + futureValueUsdt;
-        totalEquityUsdt = walletAssetsValueUsdt;
-
+        
         try {
           if (Object.keys(assetsMap).length > 0) {
             await bitgetClient.loadMarkets();
@@ -107,7 +105,6 @@ export async function GET(req) {
           for (const pos of positions) {
             if (parseFloat(pos.contracts) > 0) {
               const upnl = parseFloat(pos.unrealizedPnl || 0);
-              totalEquityUsdt += upnl;
               futureValueUsdt += upnl;
             }
           }

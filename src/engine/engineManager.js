@@ -1,20 +1,22 @@
 import { runCognitiveLoop } from './aiCognitiveDualLoop.js';
 import { checkZeroBalance } from './guards/balanceGuard.js';
-import { executeStrategy } from './executionGuard.js';
+import { executeStrategy, forceClosePosition } from './executionGuard.js';
 import { syncState } from './executionGuard.js';
 import { checkGlobalCircuitBreaker, checkZombieGuard, tickMathGuard } from './mathGuard.js';
 import { getBitgetClient } from '../services/bitget.js';
 import { PrismaClient } from '@prisma/client';
+import { logPhase } from './aiBase.js';
 
 const prisma = new PrismaClient();
 const activeLoops = new Map();
 
 /**
  * Starts the AI Cognitive Loop for a specific bot configuration.
- * Master Prompt: Zero-Touch Autopilot — runs indefinitely with all guards active.
  */
 export async function startEngine(botConfigId) {
   const loopId = Date.now().toString();
+  console.log(`[Engine Debug] startEngine() called for bot ${botConfigId} (LoopID: ${loopId})`);
+  
   if (activeLoops.has(botConfigId)) {
     console.log(`[Engine] Stopping existing loop for ${botConfigId} before restart...`);
   }
@@ -27,26 +29,28 @@ export async function startEngine(botConfigId) {
     await new Promise(resolve => setTimeout(resolve, 500));
     
     while (activeLoops.get(botConfigId) === loopId) {
+      console.log(`[Engine Debug] Entering loop iteration for ${botConfigId}`);
       try {
-        // Fetch fresh config to check if it's still active
+        // Fetch fresh config
         const config = await prisma.botConfig.findUnique({ 
           where: { id: botConfigId },
           include: { User: true }
         });
 
         if (!config || !config.isActive || activeLoops.get(botConfigId) !== loopId) {
-          console.log(`[Engine] Stopping loop ${loopId} for bot ${botConfigId}`);
+          console.log(`[Engine Debug] Stopping loop ${loopId} for bot ${botConfigId}. Reason: ${!config ? 'Config deleted' : (!config.isActive ? 'Bot deactivated' : 'Loop replaced')}`);
           if (activeLoops.get(botConfigId) === loopId) activeLoops.delete(botConfigId);
           break;
         }
 
+        console.log(`[Engine Loop] Bot ${botConfigId} iteration starting (LoopID: ${loopId})`);
+
         // ═══════════════════════════════════════════════
-        // §3 CIRCUIT BREAKER CHECK (every loop iteration)
+        // §3 CIRCUIT BREAKER & BALANCE CHECKS
         // ═══════════════════════════════════════════════
         const exchangeClient = getExchangeClient(config);
         if (exchangeClient) {
           try {
-            // Fetch balances from both spot and swap to get full equity picture
             let walletEquity = 0;
             const accountTypes = ['spot', 'swap'];
             const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
@@ -58,12 +62,9 @@ export async function startEngine(botConfigId) {
                   const val = parseFloat(balance.total?.[coin] || 0);
                   if (val > 0) walletEquity += val;
                 }
-              } catch (e) {
-                // Skip account types that don't exist
-              }
+              } catch (e) {}
             }
 
-            // Include value of open positions (unrealized P&L)
             let unrealizedPnlTotal = 0;
             try {
               const positions = await exchangeClient.fetchPositions();
@@ -73,151 +74,57 @@ export async function startEngine(botConfigId) {
                 }
               }
             } catch (posErr) {
-              console.warn('[Engine] Could not fetch positions for equity calculation.');
+              console.warn('[Engine] Could not fetch positions.');
             }
 
             const totalEquity = walletEquity + unrealizedPnlTotal;
-            const riskThreshold = config.allocatedPortfolioUsdt * 0.85; // 15% drop
-
-            // Debug Log as AI Log for visibility
             await logPhase(botConfigId, 'TASK_CHECK', `[Engine Guard] Equity: ${totalEquity.toFixed(2)} (Cash: ${walletEquity.toFixed(2)}, PNL: ${unrealizedPnlTotal.toFixed(2)})`);
 
-            // ═══════════════════════════════════════════════
-            // §3 ZERO BALANCE GUARD — Auto-stop if account empty
-            // ═══════════════════════════════════════════════
-            // Check specific balance for the bot's market type to ensure it stops if TRADING wallet is empty
-            let tradingBalance = 0;
-            const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
-            const targetAccType = (marketType === 'SPOT') ? 'spot' : 'swap'; 
-            
-            try {
-              const bal = await exchangeClient.fetchBalance({ type: targetAccType });
-              for (const coin of stablecoins) {
-                tradingBalance += parseFloat(bal.total?.[coin] || 0);
-              }
-            } catch (e) {
-              console.warn(`[Engine] Could not fetch specific balance for ${targetAccType}:`, e.message);
-              tradingBalance = walletEquity; // Fallback to total cash
-            }
-
-            // §3 ZERO BALANCE GUARD — Auto-stop if account empty
+            const marketType = config.marketType || 'MIXED';
             const triggered = await checkZeroBalance(exchangeClient, botConfigId, config, walletEquity, unrealizedPnlTotal, marketType);
             if (triggered) {
               activeLoops.delete(botConfigId);
               break;
             }
 
-            // Log details periodically (if equity is getting close or just for transparency)
-            console.log(`[Engine Guard] Total Value: $${totalEquity.toFixed(2)} (Cash: $${walletEquity.toFixed(2)}, PNL: $${unrealizedPnlTotal.toFixed(2)}) | Breaker at: $${riskThreshold.toFixed(2)}`);
-            
             if (config.allocatedPortfolioUsdt > 0) {
               const breaker = await checkGlobalCircuitBreaker(botConfigId, totalEquity);
               if (breaker) {
-              console.log(`[Engine] 🚨 CIRCUIT BREAKER TRIGGERED for ${botConfigId}. Equity ${totalEquity.toFixed(2)} vs Budget ${config.allocatedPortfolioUsdt}. Halting.`);
-              
-              // 1. Close all open positions on Exchange
-              try {
-                const positions = await exchangeClient.fetchPositions();
-                for (const pos of positions.filter(p => parseFloat(p.contracts) > 0)) {
-                  const closeSide = pos.side === 'long' ? 'sell' : 'buy';
-                  
-                  // CANCEL ALL PENDING ORDERS FIRST
-                  try { await exchangeClient.cancelAllOrders(pos.symbol); } catch(e) {}
-                  
-                  // CLOSE POSITION
-                  await exchangeClient.createMarketOrder(pos.symbol, closeSide, parseFloat(pos.contracts));
-                }
-                
-                // 2. SAFETY: Also cancel common symbols even if position is 0 (to catch hanging orders)
-                const commonSymbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'XLM/USDT', 'XRP/USDT'];
-                for (const s of commonSymbols) {
-                   try { await exchangeClient.cancelAllOrders(s); } catch (e) {}
-                }
-              } catch (closeErr) {
-                console.error('[Engine] Error closing positions during circuit breaker:', closeErr.message);
+                console.log(`[Engine] 🚨 CIRCUIT BREAKER TRIGGERED for ${botConfigId}. Halting.`);
+                activeLoops.delete(botConfigId);
+                break;
               }
-
-              // SYNC DATABASE: Mark all tranches as CLOSED
-              await prisma.activeTranche.updateMany({
-                where: { botConfigId, status: 'OPEN' },
-                data: { status: 'CLOSED', closedAt: new Date() }
-              });
-              
-              activeLoops.delete(botConfigId);
-              break;
             }
+          } catch (balErr) {
+            console.warn('[Engine] Guard checks failed:', balErr.message);
           }
-        } catch (balErr) {
-          console.warn('[Engine] Circuit Breaker balance check failed:', balErr.message);
         }
-      }
 
         // ═══════════════════════════════════════════════
-        // §3 BULK TICKER FETCH — Optimization for many positions
+        // §3 ZOMBIE & MATH GUARD
         // ═══════════════════════════════════════════════
         let tickerMap = {};
         if (exchangeClient) {
           try {
-             // For Bitget V2, fetchTickers() without args fetches ALL tickers
-             const tickers = await exchangeClient.fetchTickers();
-             tickerMap = tickers;
-             
-             // Normalize mapping: also index by simple symbol (e.g. BTC/USDT) to catch mismatches
-             for (const sym in tickers) {
-               const simple = sym.split(':')[0];
-               if (!tickerMap[simple]) tickerMap[simple] = tickers[sym];
-             }
-             
-             if (Object.keys(tickerMap).length > 0) {
-               // console.log(`[Engine] Bulk fetched ${Object.keys(tickers).length} tickers`);
-             }
-          } catch (e) {
-             console.warn('[Engine] Bulk ticker fetch failed, fallback to per-asset fetching.', e.message);
-          }
-        }
-
-        // ═══════════════════════════════════════════════
-        // §3 ZOMBIE GUARD
-        // ═══════════════════════════════════════════════
-        if (exchangeClient) {
-          try {
+            tickerMap = await exchangeClient.fetchTickers();
             await checkZombieGuard(exchangeClient, botConfigId, tickerMap);
-          } catch (zombieErr) {
-            console.warn(`[MathGuard] Zombie check failed for bot ${botConfigId}: ${zombieErr.message}`);
-          }
+          } catch (e) {}
         }
 
-        // ═══════════════════════════════════════════════
-        // §3 MATH GUARD TICK — TP Scaling & Trailing Stops
-        // ═══════════════════════════════════════════════
-        let nextSleepMs = 300000; // Default cooldown: 5 minutes
-        
+        let nextSleepMs = 300000; // 5 mins
         if (exchangeClient) {
           const openTranches = await prisma.activeTranche.findMany({
             where: { botConfigId, status: 'OPEN' }
           });
-          
-          let rateLimitedCount = 0;
-          const hasTickerData = Object.keys(tickerMap || {}).length > 0;
           for (const tranche of openTranches) {
-            const result = await tickMathGuard(exchangeClient, tranche, tickerMap[tranche.symbol], hasTickerData);
-            if (result === 'RATE_LIMITED' || result === 'ERROR') {
-              rateLimitedCount++;
-            }
-          }
-          
-          // If we hit rate limits, back off for longer period
-          if (rateLimitedCount > 0) {
-            console.warn(`[Engine] Rate limited on ${rateLimitedCount}/${openTranches.length} positions - extending backoff`);
-            nextSleepMs = Math.max(nextSleepMs, 300000); 
+            await tickMathGuard(exchangeClient, tranche, tickerMap[tranche.symbol], !!Object.keys(tickerMap).length);
           }
         }
 
         // ═══════════════════════════════════════════════
-        // AI COGNITIVE LOOP — Plan phase
+        // AI COGNITIVE LOOP
         // ═══════════════════════════════════════════════
         const cycleResult = await runCognitiveLoop(botConfigId);
-
         if (cycleResult && cycleResult.status === 'SUCCESS' && cycleResult.aiTasks) {
           if (config.User) {
             let bitgetSpot, bitgetFutures;
@@ -232,39 +139,39 @@ export async function startEngine(botConfigId) {
               bitgetFutures = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'FUTURES');
             }
             
-            // Execute the plan with candidates for symbol mapping
             await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId, cycleResult.candidates || []);
+
+            // ═══════════════════════════════════════════════
+            // AI FORCE CLOSE (CLOSE UNPROFITABLE/INAPPROPRIATE)
+            // ═══════════════════════════════════════════════
+            if (cycleResult.aiTasks?.close_positions && cycleResult.aiTasks.close_positions.length > 0) {
+              const futuresClient = bitgetFutures; 
+              for (const posToClose of cycleResult.aiTasks.close_positions) {
+                await forceClosePosition(futuresClient, posToClose.id, posToClose.reason);
+              }
+            }
           }
         } else if (cycleResult && cycleResult.errorType === 'QUOTA') {
-          // If Quota exhausted, back off for 10 minutes
-          console.warn(`[Engine] ⚠️ Quota Exhausted for ${botConfigId}. Waiting 10 minutes...`);
+          console.warn(`[Engine] ⚠️ Quota Exhausted. Waiting 10 minutes...`);
           nextSleepMs = 600000; 
         }
 
-        // Sleep before next cycle
         await new Promise(resolve => setTimeout(resolve, nextSleepMs));
-
         
       } catch (error) {
         if (error.message.includes('[CRITICAL_BALANCE]')) {
-          console.log(`[Engine] Stopping bot ${botConfigId} due to critical balance issue.`);
           activeLoops.delete(botConfigId);
-          break; // Exit the loop
+          break;
         }
         console.error(`[Engine] Critical error in loop for ${botConfigId}:`, error);
-        // Exponential backoff on error
         await new Promise(resolve => setTimeout(resolve, 60000));
       }
     }
   };
 
-  activeLoops.set(botConfigId, true);
-  loop(); // Start non-blocking
+  loop().catch(err => console.error(`[Engine] Non-blocking loop error for ${botConfigId}:`, err));
 }
 
-/**
- * Helper: Get exchange client from config for guard checks
- */
 function getExchangeClient(config) {
   try {
     if (config.isPaperTrading && config.User?.bitgetDemoApiKey) {
@@ -273,31 +180,21 @@ function getExchangeClient(config) {
       return getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false);
     }
     return null;
-  } catch (e) {
-    return null;
-  }
+  } catch (e) { return null; }
 }
 
-/**
- * Initializes and resumes all active bots from the database.
- * §5 State Recovery: On boot, sync state from exchange.
- */
 export async function initEngine() {
+  console.log('[Engine Debug] initEngine() beginning...');
   try {
     const activeConfigs = await prisma.botConfig.findMany({
       where: { isActive: true },
       include: { User: true }
     });
-
-    console.log(`[Engine] Resuming ${activeConfigs.length} active bots...`);
-    
+    console.log(`[Engine Debug] Found ${activeConfigs.length} active bots in database.`);
     for (const config of activeConfigs) {
-      // §5 State Recovery on boot
+      console.log(`[Engine Debug] Resuming bot: ${config.id}`);
       const client = getExchangeClient(config);
-      if (client) {
-        await syncState(client, config.id, config.isPaperTrading);
-      }
-      
+      if (client) await syncState(client, config.id, config.isPaperTrading);
       startEngine(config.id);
     }
   } catch (error) {
@@ -305,9 +202,6 @@ export async function initEngine() {
   }
 }
 
-/**
- * Stops the AI Cognitive Loop for a specific bot configuration.
- */
 export function stopEngine(botConfigId) {
   if (activeLoops.has(botConfigId)) {
     console.log(`[Engine] Signaling stop for bot ${botConfigId}`);

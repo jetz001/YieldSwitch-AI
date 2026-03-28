@@ -15,39 +15,56 @@ function mapSymbolForExchange(symbol, marketType, client) {
       return symbol;
     }
     
-    // For futures/swaps, check if we need to add settlement currency
+    // For futures/swaps, prioritize finding the swap market
     if (marketType === 'FUTURES' || marketType === 'MIXED') {
-      // Check if the exact symbol exists
-      if (client.markets[symbol]) {
-        return symbol;
+      let baseSymbol = symbol.includes('/') ? symbol.split('/')[0] : symbol;
+      const quoteSymbol = symbol.includes('/') ? symbol.split('/')[1] : 'USDT';
+      
+      // Smart Substitution for Futures: WBTC -> BTC
+      if (baseSymbol === 'WBTC') {
+        console.log(`[SymbolMapper] Substituting Spot-only WBTC with BTC for Futures.`);
+        baseSymbol = 'BTC';
       }
-      
-      // Try to find the correct futures symbol by adding settlement currency
-      const baseSymbol = symbol.split('/')[0];
-      const quoteSymbol = symbol.split('/')[1];
-      
-      // Common patterns to try
+
+      // If it's already a swap symbol, return it
+      if (symbol.includes(':')) return symbol;
+
+      // Force linear swap format for Bitget V2 if no markets loaded yet
+      if (!client.markets || Object.keys(client.markets).length === 0) {
+        return `${baseSymbol}/${quoteSymbol}:${quoteSymbol}`;
+      }
+
+      // Variations to try (Standard CCXT Futures formats)
       const variations = [
-        `${baseSymbol}/${quoteSymbol}:${quoteSymbol}`, // SETH/SUSDT:SUSDT
-        `${baseSymbol}/${quoteSymbol}:${baseSymbol}`,   // Some exchanges use base as settlement
+        `${baseSymbol}/${quoteSymbol}:${quoteSymbol}`, // Linear: BTC/USDT:USDT
+        `${baseSymbol}/${quoteSymbol}:${baseSymbol}`,   // Inverse: BTC/USD:BTC
       ];
-      
+
+      // 1. Try variations first
       for (const variation of variations) {
-        if (client.markets[variation]) {
-          console.log(`[SymbolMapper] Mapped ${symbol} -> ${variation}`);
+        if (client.markets[variation] && client.markets[variation].type === 'swap') {
+          console.log(`[SymbolMapper] Prioritized Futures: ${symbol} -> ${variation}`);
           return variation;
         }
       }
+
+      // 2. Check if the exact symbol is already a swap market
+      if (client.markets[symbol] && client.markets[symbol].type === 'swap') {
+        return symbol;
+      }
       
-      // If no exact match found, try to find any market with this base/quote
-      const markets = Object.keys(client.markets).filter(m => 
-        m.startsWith(`${baseSymbol}/${quoteSymbol}`)
+      // 3. Fallback to any market starting with the base/quote but only if it's swap
+      const candidates = Object.keys(client.markets).filter(m => 
+        m.startsWith(`${baseSymbol}/${quoteSymbol || ''}`) && client.markets[m].type === 'swap'
       );
       
-      if (markets.length > 0) {
-        console.log(`[SymbolMapper] Found alternative ${symbol} -> ${markets[0]}`);
-        return markets[0];
+      if (candidates.length > 0) {
+        console.log(`[SymbolMapper] Found alternative swap: ${symbol} -> ${candidates[0]}`);
+        return candidates[0];
       }
+
+      // If marketType is forced FUTURES, we should probably NOT return a spot symbol
+      // but if we can't find anything, we return original as last resort
     }
     
     return symbol;
@@ -57,18 +74,6 @@ function mapSymbolForExchange(symbol, marketType, client) {
   }
 }
 
-function extractMarketTypeFromDirectives(directives) {
-  const text = String(directives || '');
-  // Marker written by Dashboard, e.g. [[MARKET_TYPE=SPOT]]
-  const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
-  if (marker?.[1]) return marker[1].toUpperCase();
-
-  // Fallback: allow "MARKET_TYPE=SPOT" or "MARKET_TYPE: SPOT"
-  const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
-  if (alt?.[1]) return alt[1].toUpperCase();
-
-  return null;
-}
 
 /**
  * Execution Guard - Master Prompt
@@ -82,9 +87,30 @@ function mapAISymbolToExchange(aiSymbol, candidates, marketType, client) {
       return aiSymbol;
     }
     
+    const isFuturesContext = marketType === 'FUTURES' || (client.options && client.options.defaultType === 'swap');
+
+    // If we are in a futures context, try to force the swap symbol format first
+    if (isFuturesContext) {
+      const base = aiSymbol.includes('/') ? aiSymbol.split('/')[0] : aiSymbol;
+      const quote = aiSymbol.includes('/') ? aiSymbol.split('/')[1] : 'USDT';
+      
+      // Substitution for WBTC -> BTC in futures
+      const finalBase = base === 'WBTC' ? 'BTC' : base;
+      const swapSymbol = `${finalBase}/${quote}:${quote}`;
+      
+      if (client.markets[swapSymbol]) {
+        return swapSymbol;
+      }
+    }
+
     // First check if AI symbol exists directly on exchange
     if (client.markets[aiSymbol]) {
-      return aiSymbol;
+      // Even if it exists, if we are in futures and this is a spot symbol, keep looking
+      if (isFuturesContext && client.markets[aiSymbol].type === 'spot') {
+        // Continue to fallback mapping
+      } else {
+        return aiSymbol;
+      }
     }
     
     // Look for symbol in candidates to find the correct exchange symbol
@@ -93,8 +119,13 @@ function mapAISymbolToExchange(aiSymbol, candidates, marketType, client) {
     );
     
     if (candidate && candidate.symbol) {
-      console.log(`[SymbolMapper] AI symbol ${aiSymbol} mapped to exchange symbol ${candidate.symbol}`);
-      return candidate.symbol;
+      // Again, if in futures, check if the candidate is actually a swap
+      if (isFuturesContext && !candidate.symbol.includes(':')) {
+         // Continue to fallback mapping to get the :USDT version
+      } else {
+        console.log(`[SymbolMapper] AI symbol ${aiSymbol} mapped to exchange symbol ${candidate.symbol}`);
+        return candidate.symbol;
+      }
     }
     
     // Fallback to original mapping function
@@ -102,6 +133,71 @@ function mapAISymbolToExchange(aiSymbol, candidates, marketType, client) {
   } catch (error) {
     console.warn('[SymbolMapper] Error mapping AI symbol:', error.message);
     return aiSymbol;
+  }
+}
+
+/**
+ * Check if the symbol exists in the exchange's markets for the given market type.
+ */
+function checkMarketAvailability(client, symbol, marketType) {
+  if (!client || !client.markets) return false;
+  
+  const market = client.markets[symbol];
+  if (!market) return false;
+
+  // Final sanity check: if marketType is FUTURES, the found market MUST be swap
+  if (marketType === 'FUTURES' && market.type !== 'swap') {
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Risk Guard: Check if it's safe to open a new position
+ * Prevents over-leveraging and liquidation risks
+ */
+async function checkRiskGuard(client, botConfigId, marketType, symbol) {
+  try {
+    // 1. Max Open Positions Check (from DB)
+    const openTranchesCount = await prisma.activeTranche.count({
+      where: { botConfigId, status: 'OPEN' }
+    });
+
+    // Default max 5 positions to prevent "too many eggs in one basket"
+    const MAX_POSITIONS = 5; 
+    if (openTranchesCount >= MAX_POSITIONS) {
+      return { 
+        safe: false, 
+        reason: `🚨 REJECT: จำนวนไม้ที่เปิดอยู่ครบขีดจำกัดสูงสุด (${MAX_POSITIONS} ไม้) เพื่อป้องกันการสะสมไม้มากเกินไปและลดความเสี่ยงการโดน Liquidation ครับ` 
+      };
+    }
+
+    // 2. Margin Usage Check (only for Futures)
+    if (marketType === 'FUTURES') {
+      const balance = await client.fetchBalance();
+      
+      // For Bitget V2 Futures
+      const total = parseFloat(balance.total?.USDT || balance.total?.SUSDT || 0);
+      const used = parseFloat(balance.used?.USDT || balance.used?.SUSDT || 0);
+      
+      if (total > 0) {
+        const marginUsagePercent = (used / total) * 100;
+        
+        // Safety threshold: 60% of equity used as margin is already high for automated systems
+        if (marginUsagePercent > 60) {
+           return { 
+             safe: false, 
+             reason: `🚨 REJECT: อัตราการใช้ Margin สูงเกินไป (${marginUsagePercent.toFixed(1)}%): พอร์ตของคุณมีความเสี่ยงสูงต่อการโดน Liquidation หากเปิดไม้เพิ่มในขณะนี้ครับ` 
+           };
+        }
+      }
+    }
+    
+    return { safe: true };
+  } catch (error) {
+    console.warn('[RiskGuard] Error checking safety:', error.message);
+    return { safe: true }; // Proceed if check fails to avoid blocking (failsafe)
   }
 }
 
@@ -113,23 +209,98 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
     });
     if (!config) return;
 
-    const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || 'MIXED';
+    const marketType = config.marketType || 'SPOT';
+
+    // Pre-load markets for both clients
+    if (engineClientSpot) await engineClientSpot.loadMarkets().catch(() => {});
+    if (engineClientFutures) await engineClientFutures.loadMarkets().catch(() => {});
 
     for (const task of tasks.trades || []) {
-      const { symbol, side, amount, strategy, confidence, stopLossPercent, sector } = task;
+      try {
+        const { symbol, side, amount, strategy, confidence, stopLossPercent, sector } = task;
 
-      // 1. SPOT Market Guard
-      if (marketType === 'SPOT' && side?.toLowerCase() === 'sell') {
-        await prisma.aILogStream.create({
-          data: {
-            botConfigId,
-            step: 'TASK_CHECK',
-            content: 'REJECT SHORT: SPOT Market only allows Long/Hold.',
-            status: 'FAILED'
+        // Determine client early to check market availability
+        const priceClient =
+          marketType === 'SPOT'
+            ? engineClientSpot
+            : marketType === 'FUTURES'
+              ? engineClientFutures
+              : (side?.toLowerCase() === 'sell' && marketType === 'MIXED')
+                ? engineClientFutures
+                : engineClientFutures || engineClientSpot;
+
+        let finalClient = priceClient;
+        if (marketType === 'FUTURES') {
+          if (!engineClientFutures) {
+            await prisma.aILogStream.create({
+              data: {
+                botConfigId,
+                step: 'IMPLEMENT',
+                content: `REJECT: โหมด FUTURE ต้องการ Futures Client แต่ไม่พบการตั้งค่า API Key`,
+                status: 'FAILED'
+              }
+            });
+            continue;
           }
-        });
-        continue;
-      }
+          finalClient = engineClientFutures;
+        }
+
+        if (!finalClient) {
+          await prisma.aILogStream.create({
+            data: {
+              botConfigId,
+              step: 'IMPLEMENT',
+              content: `MarketType Guard: ไม่มี client สำหรับ ${marketType} (${symbol})`,
+              status: 'FAILED'
+            }
+          });
+          continue;
+        }
+
+        // Map AI-generated symbol to correct exchange symbol
+        const mappedSymbol = mapAISymbolToExchange(symbol, candidates, marketType, finalClient);
+
+        // [New] Risk Guard Check in IMPLEMENT phase
+        const riskCheck = await checkRiskGuard(finalClient, botConfigId, marketType, mappedSymbol);
+        if (!riskCheck.safe) {
+           await prisma.aILogStream.create({
+             data: {
+               botConfigId,
+               step: 'IMPLEMENT',
+               content: riskCheck.reason,
+               status: 'FAILED'
+             }
+           });
+           continue;
+        }
+
+        // [New] Market Existence Guard in IMPLEMENT phase
+        if (!checkMarketAvailability(finalClient, mappedSymbol, marketType)) {
+          const marketLabel = (finalClient === engineClientFutures) ? 'FUTURES' : 'SPOT';
+          await prisma.aILogStream.create({
+            data: {
+              botConfigId,
+              step: 'IMPLEMENT',
+              content: `REJECT: เหรียญ ${mappedSymbol} ไม่มีในตลาด ${marketLabel} (ข้ามขั้นตอน TASK CHECK)`,
+              status: 'FAILED'
+            }
+          });
+          console.log(`[ExecGuard] Market Existence Guard: ${mappedSymbol} not found in ${marketLabel} markets. Skipping.`);
+          continue;
+        }
+
+        // 1. SPOT Market Guard
+        if (marketType === 'SPOT' && side?.toLowerCase() === 'sell') {
+          await prisma.aILogStream.create({
+            data: {
+              botConfigId,
+              step: 'IMPLEMENT',
+              content: 'REJECT SHORT: ตลาด SPOT อนุญาตเฉพาะ Long/Hold เท่านั้น (ข้ามขั้นตอน TASK CHECK)',
+              status: 'FAILED'
+            }
+          });
+          continue;
+        }
 
 
       // 3. Trade Tracking
@@ -137,32 +308,9 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       const hasNativeDemo = config.isPaperTrading && !!user.bitgetDemoApiKey;
       const isShadowMode = confidence < 70 || strategy === 'SHADOW_TRADE' || (config.isPaperTrading && !hasNativeDemo);
 
-      const priceClient =
-        marketType === 'SPOT'
-          ? engineClientSpot
-          : marketType === 'FUTURES'
-            ? engineClientFutures
-            : engineClientFutures || engineClientSpot;
-
-      if (!priceClient) {
-        await prisma.aILogStream.create({
-          data: {
-            botConfigId,
-            step: 'TASK_CHECK',
-            content: `MarketType Guard: ไม่มี client สำหรับ ${marketType} (${symbol})`,
-            status: 'FAILED'
-          }
-        });
-        continue;
-      }
-
-      if (priceClient) {
-        try { await priceClient.loadMarkets(); } catch (e) {}
-      }
-
       // 2. Pre-trade Balance Guard
       try {
-        const balance = await priceClient.fetchBalance();
+        const balance = await finalClient.fetchBalance();
         
         // Bitget can return balance under USDT, SUSDT, or USDC depending on account type
         const possibleAssets = ['USDT', 'SUSDT', 'USDC'];
@@ -184,10 +332,13 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         if (freeBalance < amount) {
           // Diagnostic: check if funds exist in the "other" account
           try {
-            const otherClient = marketType === 'FUTURES' || marketType === 'MIXED' ? engineClientSpot : engineClientFutures;
+            const otherClient = (marketType === 'FUTURES' || marketType === 'MIXED' || (marketType === 'SPOT' && side?.toLowerCase() === 'buy')) 
+              ? (finalClient === engineClientFutures ? engineClientSpot : engineClientFutures)
+              : null;
+            
             if (otherClient) {
               const otherBal = await otherClient.fetchBalance();
-              const otherType = marketType === 'FUTURES' || marketType === 'MIXED' ? 'SPOT' : 'FUTURES';
+              const otherType = (otherClient === engineClientSpot) ? 'SPOT' : 'FUTURES';
               
               let otherValue = 0;
               for (const asset of possibleAssets) {
@@ -200,7 +351,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                 // AUTO-TRANSFER LOGIC
                 // In Bitget V2, 'usdt-margined' is the standard label for USDT-M Futures (Mix)
                 const fromType = otherType.toLowerCase() === 'spot' ? 'spot' : 'usdt-margined';
-                const toType = (marketType === 'FUTURES' || marketType === 'MIXED') ? 'usdt-margined' : 'spot';
+                const toType = (finalClient === engineClientFutures) ? 'usdt-margined' : 'spot';
                 
                 await logPhase(botConfigId, 'IMPLEMENT', `[Engine] ♻️ Auto-Transfer: กำลังโอนเงิน ${amount} ${detectedAsset} จาก ${otherType} ไปยัง ${marketType} อัตโนมัติ...`);
                 
@@ -211,12 +362,12 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                   // Fallback for Demo/Legacy labels
                   if (firstTryErr.message && String(firstTryErr.message).includes('404')) {
                     const legacyFrom = otherType.toLowerCase() === 'spot' ? 'spot' : 'mix';
-                    const legacyTo = (marketType === 'FUTURES' || marketType === 'MIXED') ? 'mix' : 'spot';
+                    const legacyTo = (finalClient === engineClientFutures) ? 'mix' : 'spot';
                     try {
                       await otherClient.transfer(detectedAsset, amount, legacyFrom, legacyTo);
                     } catch (legacyErr) {
                       // Ultra-safe check for sandbox
-                      const apiUrls = priceClient.urls || {};
+                      const apiUrls = finalClient.urls || {};
                       const apiUrlString = String(apiUrls.api || '');
                       const isSandbox = apiUrlString.toLowerCase().indexOf('sandbox') !== -1;
                       
@@ -239,7 +390,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                 await logPhase(botConfigId, 'IMPLEMENT', `[Engine] ✅ Auto-Transfer สำเร็จ: ยอดเงินพร้อมสำหรับการเทรดแล้ว`);
                 
                 // Refresh balance
-                const newBal = await priceClient.fetchBalance();
+                const newBal = await finalClient.fetchBalance();
                 const nf1 = (newBal[detectedAsset] && typeof newBal[detectedAsset] === 'object') ? (newBal[detectedAsset].free || 0) : 0;
                 const nf2 = (newBal.free && newBal.free[detectedAsset]) || 0;
                 freeBalance = Math.max(parseFloat(nf1), parseFloat(nf2));
@@ -254,7 +405,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                    diagnosticMsg += `\n💡 พบยอดเงินเพียง ${otherValue.toFixed(2)} USDT ในบัญชี ${otherType} (รวมแล้วก็ยังไม่พอ)`;
                 }
                 
-                await logPhase(botConfigId, 'TASK_CHECK', diagnosticMsg);
+                await logPhase(botConfigId, 'IMPLEMENT', diagnosticMsg);
                 continue;
               }
             }
@@ -275,7 +426,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
                throw new Error(`[CRITICAL_BALANCE] ${finalMsg}`);
             }
 
-            await logPhase(botConfigId, 'TASK_CHECK', finalMsg);
+            await logPhase(botConfigId, 'IMPLEMENT', finalMsg);
             continue;
           }
         }
@@ -283,9 +434,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         console.warn('[ExecGuard] Balance check failed, proceeding with caution:', balErr.message);
       }
 
-      // Map AI-generated symbol to correct exchange symbol
-      const mappedSymbol = mapAISymbolToExchange(symbol, candidates, marketType, priceClient);
-      const ticker = await priceClient.fetchTicker(mappedSymbol);
+      const ticker = await finalClient.fetchTicker(mappedSymbol);
       const entryPrice = side?.toLowerCase() === 'buy' ? ticker.ask : ticker.bid;
 
       const stopLossPrice = calculateSLPrice(entryPrice, side, stopLossPercent);
@@ -295,7 +444,6 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         data: {
           botConfigId,
           symbol: mappedSymbol, // Use mapped symbol for trading
-          originalSymbol: symbol, // Keep original symbol for reference
           side: side.toUpperCase(),
           status: 'OPEN',
           trancheGroupId: `${isShadowMode ? 'shadow' : 'trade'}-${Date.now()}`,
@@ -332,7 +480,7 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       }
 
       // 4. Execution
-      const executionClient = priceClient;
+      const executionClient = finalClient;
       if (!executionClient) continue;
 
       const isFuturesExecution = executionClient === engineClientFutures;
@@ -346,21 +494,36 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
       }
 
       try {
-        const tpPrice = tpTiers && tpTiers[0] ? tpTiers[0].price : null;
+        const tpPrice = tpTiers && tpTiers.tp1 ? tpTiers.tp1.price : null;
         await enterTWAPLimit(executionClient, mappedSymbol, side.toLowerCase(), amount, 'DIRECTIONAL', botConfigId, stopLossPrice, tpPrice, marketType);
-      } catch (execErr) {
-        if (execErr.name === 'InsufficientFunds' || execErr.message.includes('Insufficient balance') || execErr.message.includes('43012')) {
+        } catch (execErr) {
+          if (execErr.name === 'InsufficientFunds' || execErr.message.includes('Insufficient balance') || execErr.message.includes('43012')) {
+            await prisma.aILogStream.create({
+              data: {
+                botConfigId,
+                step: 'IMPLEMENT',
+                content: `🚨 ยอดเงินในบัญชีไม่เพียงพอสำหรับการเทรด ${mappedSymbol}: กรุณาตรวจสอบกระเป๋าเงินของคุณ`,
+                status: 'FAILED'
+              }
+            });
+          } else {
+            throw execErr;
+          }
+        }
+      } catch (taskErr) {
+        console.error(`[ExecutionGuard] Task Failure for ${task.symbol}:`, taskErr.message);
+        if (botConfigId) {
           await prisma.aILogStream.create({
             data: {
               botConfigId,
-              step: 'TASK_CHECK',
-              content: `🚨 ยอดเงินในบัญชีไม่เพียงพอสำหรับการเทรด ${mappedSymbol}: กรุณาตรวจสอบกระเป๋าเงินของคุณ`,
+              step: 'IMPLEMENT',
+              content: `❌ การส่งคำสั่ง ${task.symbol} ล้มเหลว: ${taskErr.message}`,
               status: 'FAILED'
             }
           });
-        } else {
-          throw execErr; // Rethrow other errors to the main loop catch
         }
+        // Continue to next task
+        continue;
       }
     }
   } catch (error) {
@@ -370,14 +533,43 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
 }
 
 async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId, slPrice = null, tpPrice = null, marketType = 'SPOT') {
-  const params = { timeInForce: 'PO' };
+  const params = {}; // Removed timeInForce: 'PO' as it might conflict with attached TP/SL
   
-  // Native TP/SL for Bitget V2 (Mapped by CCXT)
-  if (slPrice) {
-    params.stopLossPrice = slPrice;
+  // Load market details to check limits and precision
+  const market = client.market(symbol);
+  if (!market) {
+    throw new Error(`Market ${symbol} not found on exchange.`);
   }
-  if (tpPrice) {
-    params.takeProfitPrice = tpPrice;
+
+  // Native TP/SL for Bitget V2 (Mapped by CCXT) - Only supported for Futures (Swap)
+  const isSwapClient = client.options && client.options.defaultType === 'swap';
+  const isSwapSymbol = symbol.includes(':');
+  
+  // Strict Futures Order Check: Symbol MUST have colon OR client MUST be swap
+  const isFuturesOrder = isSwapSymbol || (isSwapClient && market.type === 'swap');
+
+  if (isFuturesOrder) {
+    // CCXT Bitget V2 explicit TP/SL structure
+    if (slPrice) {
+      params.stopLoss = {
+        'triggerPrice': client.priceToPrecision(symbol, slPrice),
+        'type': 'market'
+      };
+    }
+    if (tpPrice) {
+      params.takeProfit = {
+        'triggerPrice': client.priceToPrecision(symbol, tpPrice),
+        'type': 'market'
+      };
+    }
+    
+    // Bitget V2: When using oneWayMode, omit posSide to avoid 'unilateral position type' mismatch
+    params.tradeSide = 'open';
+    params.oneWayMode = true; 
+  } else {
+    // SPOT market does not support native TP/SL in createOrder
+    // We will rely on MathGuard to handle TP/SL via separate tick monitoring
+    console.log(`[Engine] SPOT order for ${symbol}: Native TP/SL omitted (will be handled by MathGuard)`);
   }
   const ticker = await client.fetchTicker(symbol);
   
@@ -388,7 +580,7 @@ async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId
         await prisma.aILogStream.create({
           data: {
             botConfigId,
-            step: 'TASK_CHECK',
+            step: 'IMPLEMENT',
             content: `Spread Guard: ${spread.toFixed(2)}% > 1%. Rejected to avoid slippage.`,
             status: 'FAILED'
           }
@@ -398,36 +590,28 @@ async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId
     }
   }
 
-  if (valueUsdt > 5000) {
-    const chunkUsdt = 500;
-    const slices = Math.floor(valueUsdt / chunkUsdt);
-    for (let i = 0; i < slices; i++) {
-      const freshTicker = await client.fetchTicker(symbol);
-      const safeLimit = side === 'buy' ? freshTicker.bid : freshTicker.ask;
-      const amountCoins = chunkUsdt / safeLimit;
-      await client.createLimitOrder(symbol, side, amountCoins, safeLimit, params);
-      
-      if (botConfigId) {
-        let actionLabel = side === 'buy' ? 'ซื้อ' : 'ขาย';
-        if (marketType === 'FUTURES' || marketType === 'MIXED') {
-          actionLabel = side === 'buy' ? 'เปิด LONG' : 'เปิด SHORT';
-        }
-        
-        await prisma.aILogStream.create({
-          data: {
-            botConfigId,
-            step: 'IMPLEMENT',
-            content: `[Engine] ✅ วางคำสั่ง${actionLabel} ${symbol} เรียบร้อยแล้วที่ราคา ${safeLimit.toFixed(6)} (TWAP Chunk)`,
-            status: 'SUCCESS'
-          }
-        });
-      }
-      await new Promise(r => setTimeout(r, 2000));
+  const processOrder = async (orderAmountUsdt, currentTicker) => {
+    const safeLimit = side === 'buy' ? currentTicker.bid : currentTicker.ask;
+    let amountCoins = orderAmountUsdt / safeLimit;
+
+    // Apply Exchange Precision & Limits
+    const precisionAmount = client.amountToPrecision(symbol, amountCoins);
+    const precisionPrice = client.priceToPrecision(symbol, safeLimit);
+    
+    const finalAmount = parseFloat(precisionAmount);
+    const minAmount = market.limits?.amount?.min || 0;
+    const minCost = market.limits?.cost?.min || 0;
+    const currentCost = finalAmount * parseFloat(precisionPrice);
+
+    if (finalAmount < minAmount) {
+       throw new Error(`จำนวนเหรียญ ${finalAmount} น้อยกว่าขั้นต่ำที่ตลาดกำหนด (${minAmount} ${market.base})`);
     }
-  } else {
-    const safeLimit = side === 'buy' ? ticker.bid : ticker.ask;
-    const amountCoins = valueUsdt / safeLimit;
-    await client.createLimitOrder(symbol, side, amountCoins, safeLimit, params);
+    
+    if (currentCost < minCost) {
+       throw new Error(`มูลค่ารวม ${currentCost.toFixed(2)} USDT น้อยกว่าขั้นต่ำที่ตลาดกำหนด (${minCost} USDT)`);
+    }
+
+    await client.createLimitOrder(symbol, side, finalAmount, parseFloat(precisionPrice), params);
     
     if (botConfigId) {
       let actionLabel = side === 'buy' ? 'ซื้อ' : 'ขาย';
@@ -439,11 +623,23 @@ async function enterTWAPLimit(client, symbol, side, valueUsdt, type, botConfigId
         data: {
           botConfigId,
           step: 'IMPLEMENT',
-          content: `[Engine] ✅ วางคำสั่ง${actionLabel} ${symbol} เรียบร้อยแล้วที่ราคา ${safeLimit.toFixed(6)}`,
+          content: `[Engine] ✅ วางคำสั่ง${actionLabel} ${symbol} เรียบร้อยแล้วที่ราคา ${precisionPrice} (รอการจับคู่ใน Open Orders)`,
           status: 'SUCCESS'
         }
       });
     }
+  };
+
+  if (valueUsdt > 5000) {
+    const chunkUsdt = 500;
+    const slices = Math.floor(valueUsdt / chunkUsdt);
+    for (let i = 0; i < slices; i++) {
+      const freshTicker = await client.fetchTicker(symbol);
+      await processOrder(chunkUsdt, freshTicker);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  } else {
+    await processOrder(valueUsdt, ticker);
   }
 }
 
@@ -473,5 +669,52 @@ export async function syncState(client, botConfigId, isPaperMode = false) {
     }
   } catch (error) {
     console.error('[ExecGuard] Sync failed:', error.message);
+  }
+}
+
+/**
+ * Force close a position based on AI recommendation
+ */
+export async function forceClosePosition(client, positionId, reason) {
+  try {
+    const tranche = await prisma.activeTranche.findUnique({
+      where: { id: positionId },
+      include: { BotConfig: true }
+    });
+
+    if (!tranche || tranche.status !== 'OPEN') return;
+
+    const orderSide = tranche.side === 'LONG' ? 'sell' : 'buy';
+    const ticker = await client.fetchTicker(tranche.symbol);
+    const exitPrice = ticker.last;
+
+    if (!tranche.isPaperTrade) {
+      const params = {};
+      if (client.options.defaultType === 'swap') {
+        params.tradeSide = 'close';
+      }
+      const precisionAmount = client.amountToPrecision(tranche.symbol, tranche.remainingAmount);
+      await client.createMarketOrder(tranche.symbol, orderSide, parseFloat(precisionAmount), params);
+    }
+
+    const pnlPercent = ((exitPrice - tranche.entryPrice) / tranche.entryPrice) * 100;
+    const adjustedPnl = tranche.side === 'SHORT' ? -pnlPercent : pnlPercent;
+
+    await prisma.activeTranche.update({
+      where: { id: positionId },
+      data: {
+        status: 'CLOSED',
+        exitPrice,
+        pnlUsdt: adjustedPnl,
+        closedAt: new Date()
+      }
+    });
+
+    await logPhase(tranche.botConfigId, 'TRIGGER', `🧠 AI Force Close: ปิดสถานะ ${tranche.symbol} (เหตุผล: ${reason}) — PNL ${adjustedPnl.toFixed(2)}%`);
+    
+    return true;
+  } catch (error) {
+    console.error('[ExecGuard] Force close failed:', error.message);
+    return false;
   }
 }

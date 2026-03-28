@@ -30,12 +30,23 @@ export function getLLMClient(apiKey, provider = 'OPENAI', model = 'gpt-4o', shou
     if (m.includes('gemma')) {
       if (m.includes('27b')) finalModel = 'gemma-3-27b-it';
       else if (m.includes('12b')) finalModel = 'gemma-3-12b-it';
+      else if (m.includes('1b')) finalModel = 'gemma-3-1b-it';
       else finalModel = 'gemma-3-4b-it';
-    } else if (m.includes('pro')) {
+    } else if (m.includes('2.0-flash-lite')) {
+      finalModel = 'gemini-2.0-flash-lite-preview-02-05';
+    } else if (m.includes('2.0-flash')) {
+      finalModel = 'gemini-2.0-flash-exp';
+    } else if (m.includes('1.5-pro')) {
       finalModel = 'gemini-1.5-pro-latest';
-    } else {
-      // All other variants (3.1 flash, 2.5 flash, etc) map to 1.5-flash-latest for stability
+    } else if (m.includes('1.5-flash-8b')) {
+      finalModel = 'gemini-1.5-flash-8b-latest';
+    } else if (m.includes('1.5-flash')) {
       finalModel = 'gemini-1.5-flash-latest';
+    } else if (m.includes('3.1-flash-lite')) {
+      finalModel = 'gemini-3.1-flash-lite-latest';
+    } else {
+      // Direct pass for any other specific models, or fallback to 1.5-flash
+      finalModel = model.startsWith('models/') ? model.replace('models/', '') : model;
     }
     
     const client = new GoogleGenAI({ apiKey: decryptedKey });

@@ -382,10 +382,21 @@ export default function Dashboard() {
                       <td className="py-4">
                         <div className="flex flex-col">
                           <div className="font-bold text-slate-200 text-sm">{pos.symbol}</div>
-                          <div className="text-[10px] text-teal-400 uppercase tracking-wider">
-                            {pos.side} / ${pos.remainingAmount.toLocaleString()} USDT
+                          <div className={`text-[10px] uppercase tracking-wider ${
+                            pos.symbol.includes(':') 
+                              ? (pos.side.toUpperCase() === 'BUY' ? 'text-teal-400' : 'text-rose-400')
+                              : 'text-teal-400'
+                          }`}>
+                            {(() => {
+                              const isFutures = pos.symbol.includes(':');
+                              if (isFutures) {
+                                return pos.side.toUpperCase() === 'BUY' ? 'POSITION LONG' : 'POSITION SHORT';
+                              }
+                              return `${pos.side.toUpperCase()} / $${pos.remainingAmount.toLocaleString()} USDT`;
+                            })()}
+                            {pos.symbol.includes(':') && ` / $${pos.remainingAmount.toLocaleString()} USDT`}
                             <span className="text-slate-500 ml-1">
-                              ({(pos.remainingAmount / pos.entryPrice).toFixed(4)} {pos.symbol.split('/')[0]})
+                              ({(pos.remainingAmount / pos.entryPrice).toFixed(4)} {pos.symbol.split('/')[0].split(':')[0]})
                             </span>
                           </div>
                         </div>

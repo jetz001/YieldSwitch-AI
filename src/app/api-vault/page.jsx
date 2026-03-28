@@ -328,10 +328,23 @@ export default function ApiVault() {
                   )}
                   {form.aiProvider === 'GEMINI' && (
                     <>
-                      <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (🚀 Stable 500 RPD)</option>
-                      <option value="gemma-3-4b-it">Gemma-3 4B (✅ verified Working Now)</option>
-                      <option value="gemini-3.1-pro">Gemini 3.1 Pro (⚠️ High Rate - Likely 404)</option>
-                      <option value="nano-banana-pro">Nano Banana Pro (Image/Reasoning)</option>
+                      {/* Gemini 2.0 Family */}
+                      <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (🚀 1M TPM / 15 RPD)</option>
+                      <option value="gemini-2.0-flash-lite-preview-02-05">Gemini 2.0 Flash-Lite (⚡ 1M TPM / 15 RPD)</option>
+                      
+                      {/* Gemini 1.5 Family */}
+                      <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (🚀 Stable / 1M TPM)</option>
+                      <option value="gemini-1.5-flash-8b-latest">Gemini 1.5 Flash-8B (⚡ Light / 1M TPM)</option>
+                      <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro (🧠 Smart / 32K TPM)</option>
+                      
+                      {/* Gemini 3.1 Family (Experimental) */}
+                      <option value="gemini-3.1-flash-lite-latest">Gemini 3.1 Flash-Lite (🆕 Latest Exp)</option>
+                      
+                      {/* Gemma 3 (Gemma Family) */}
+                      <option value="gemma-3-27b-it">Gemma-3 27B (✅ 15K TPM / 14.4K RPD)</option>
+                      <option value="gemma-3-12b-it">Gemma-3 12B (✅ 15K TPM / 14.4K RPD)</option>
+                      <option value="gemma-3-4b-it">Gemma-3 4B (✅ 15K TPM / 14.4K RPD)</option>
+                      <option value="gemma-3-1b-it">Gemma-3 1B (⚡ Fastest / 15K TPM)</option>
                     </>
                   )}
                 </select>

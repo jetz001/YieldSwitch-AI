@@ -30,6 +30,18 @@ export async function getContext(botConfigId, marketType) {
     where: { botConfigId, status: 'OPEN' }
   });
 
+  const activePositionsForAI = openTranches.map(t => {
+    const tpTiers = t.tpTiers ? JSON.parse(t.tpTiers) : null;
+    return {
+      id: t.id.substring(0, 8), // Truncate ID to save tokens
+      symbol: t.symbol,
+      side: t.side,
+      entry: t.entryPrice,
+      sl: t.stopLossPrice,
+      tp: tpTiers?.tp1?.price || null
+    };
+  });
+
   const portfolioExposure = openTranches.reduce((acc, t) => {
     const sector = getSectorForSymbol(t.symbol);
     acc[sector] = (acc[sector] || 0) + 1;
@@ -39,9 +51,11 @@ export async function getContext(botConfigId, marketType) {
   const maxBullets = config.maxSplits || 10;
   const bulletsAvailable = Math.max(0, maxBullets - openTranches.length);
 
-  const candidatesForAI = candidates.slice(0, 3).map(c => ({
-    ...c,
-    symbol: c.originalSymbol || c.symbol
+  const candidatesForAI = candidates.slice(0, 2).map(c => ({
+    symbol: c.originalSymbol || c.symbol,
+    price: c.price,
+    score: c.score,
+    reason: c.reason?.substring(0, 100) // Truncate reasoning
   }));
 
   return {
@@ -53,6 +67,7 @@ export async function getContext(botConfigId, marketType) {
     portfolioExposure,
     bulletsAvailable,
     candidatesForAI,
+    activePositionsForAI,
     llmInfo: getLLMClient(config.User.aiApiKey, config.User.aiProvider || 'OPENAI', config.User.aiModel || 'gpt-4o', true)
   };
 }
@@ -76,7 +91,7 @@ export async function callLLM(llmInfo, rules, contextPayload) {
     const completionOptions = {
       model: model,
       messages: [{ role: 'system', content: rules }, { role: 'user', content: JSON.stringify(contextPayload) }],
-      max_tokens: 1000
+      max_tokens: 2000
     };
     if (normAiProvider !== 'GEMINI') completionOptions.response_format = { type: 'json_object' };
     const response = await client.chat.completions.create(completionOptions);
@@ -91,7 +106,13 @@ export function cleanJson(str) {
 
 export async function logPhase(botConfigId, step, content) {
   try {
-    console.log(`[AI Log] ${step}: ${content.substring(0, 80)}...`);
+    // Safe truncation for console log to avoid breaking multi-byte characters (like Thai)
+    const safeTruncate = (str, len) => {
+      if (!str || str.length <= len) return str;
+      return Array.from(str).slice(0, len).join('') + '...';
+    };
+    
+    console.log(`[AI Log] ${step}: ${safeTruncate(content, 80)}`);
     await prisma.aILogStream.create({
       data: {
         id: randomUUID(),

@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+// Diagnostic Touch
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { NextResponse } from 'next/server';
@@ -10,7 +11,10 @@ let engineInitialized = false;
 
 export async function GET(req) {
   if (!engineInitialized) {
-    initEngine();
+    console.log('[DEBUG] initEngine() triggered from /api/dashboard/stats');
+    initEngine().catch(err => {
+      console.error('[CRITICAL] initEngine failed on startup:', err);
+    });
     engineInitialized = true;
   }
   try {

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -12,7 +12,7 @@ model AILogStream {
   botConfigId String
   step        AIStep
   content     String
-  status      LogStatus @default("PENDING")
+  status      LogStatus @default(PENDING)
   timestamp   DateTime  @default(now())
   BotConfig   BotConfig @relation(fields: [botConfigId], references: [id], onDelete: Cascade)
 }
@@ -22,7 +22,7 @@ model ActiveTranche {
   botConfigId         String
   symbol              String
   side                String
-  status              TrancheStatus @default("OPEN")
+  status              TrancheStatus @default(OPEN)
   trancheGroupId      String
   entryPrice          Float
   exitPrice           Float?
@@ -39,7 +39,7 @@ model ActiveTranche {
   closedAt            DateTime?
   sector              String?       @default("OTHER")
   tpTiers             String?
-  originalSymbol      String?
+  marketType          MarketType    @default(SPOT)
   BotConfig           BotConfig     @relation(fields: [botConfigId], references: [id], onDelete: Cascade)
 }
 
@@ -56,6 +56,7 @@ model BotConfig {
   isActive                        Boolean         @default(true)
   isPaperTrading                  Boolean         @default(true)
   aiDirectives                    String?         @default("เน้นความปลอดภัยและกำไรที่สม่ำเสมอ")
+  marketType                      MarketType      @default(SPOT)
   AILogStream                     AILogStream[]
   ActiveTranche                   ActiveTranche[]
   User                            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -76,15 +77,12 @@ model User {
   id                   String             @id
   email                String             @unique
   passwordHash         String?
-  authProvider         AuthProvider       @default("CREDENTIALS")
-  role                 Role               @default("USER")
-  status               Status             @default("ACTIVE")
+  authProvider         AuthProvider       @default(CREDENTIALS)
+  role                 Role               @default(USER)
+  status               Status             @default(ACTIVE)
   bitgetApiKey         String?
   bitgetApiSecret      String?
   bitgetPassphrase     String?
-  bitgetDemoApiKey     String?
-  bitgetDemoApiSecret  String?
-  bitgetDemoPassphrase String?
   aiApiKey             String?
   aiProvider           String?            @default("OPENAI")
   aiModel              String?            @default("gpt-4o")
@@ -94,6 +92,9 @@ model User {
   lastActive           DateTime           @default(now())
   createdAt            DateTime           @default(now())
   updatedAt            DateTime
+  bitgetDemoApiKey     String?
+  bitgetDemoApiSecret  String?
+  bitgetDemoPassphrase String?
   BotConfig            BotConfig[]
   SecurityAbuseLog     SecurityAbuseLog[]
 }

@@ -101,7 +101,12 @@ export async function checkZombieGuard(exchangeClient, botConfigId, tickerMap = 
             // Close the zombie position
             if (!tranche.isPaperTrade) {
               const closeSide = tranche.side === 'LONG' ? 'sell' : 'buy';
-              await exchangeClient.createMarketOrder(tranche.symbol, closeSide, tranche.remainingAmount);
+              const params = {};
+              if (exchangeClient.options.defaultType === 'swap') {
+                params.tradeSide = 'close';
+              }
+              const precisionAmount = exchangeClient.amountToPrecision(tranche.symbol, tranche.remainingAmount);
+              await exchangeClient.createMarketOrder(tranche.symbol, closeSide, parseFloat(precisionAmount), params);
             }
 
             await prisma.activeTranche.update({
@@ -237,7 +242,12 @@ async function scaleOut(exchangeClient, tranche, percent, tpLayer) {
   const orderSide = tranche.side === 'LONG' ? 'sell' : 'buy';
   
   if (!tranche.isPaperTrade) {
-    await exchangeClient.createMarketOrder(tranche.symbol, orderSide, sellAmount);
+    const params = {};
+    if (exchangeClient.options.defaultType === 'swap') {
+      params.tradeSide = 'close';
+    }
+    const precisionAmount = exchangeClient.amountToPrecision(tranche.symbol, sellAmount);
+    await exchangeClient.createMarketOrder(tranche.symbol, orderSide, parseFloat(precisionAmount), params);
   }
   
   tranche.remainingAmount = tranche.remainingAmount - sellAmount;
@@ -251,7 +261,12 @@ async function executeStopPhase(exchangeClient, tranche, type) {
   const orderSide = tranche.side === 'LONG' ? 'sell' : 'buy';
   
   if (!tranche.isPaperTrade) {
-    await exchangeClient.createMarketOrder(tranche.symbol, orderSide, tranche.remainingAmount);
+    const params = {};
+    if (exchangeClient.options.defaultType === 'swap') {
+      params.tradeSide = 'close';
+    }
+    const precisionAmount = exchangeClient.amountToPrecision(tranche.symbol, tranche.remainingAmount);
+    await exchangeClient.createMarketOrder(tranche.symbol, orderSide, parseFloat(precisionAmount), params);
   }
 
   const ticker = await exchangeClient.fetchTicker(tranche.symbol);

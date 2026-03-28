@@ -3,8 +3,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Clock, Activity, Terminal, AlertTriangle } from 'lucide-react';
 
-function normalizeEntryAction(side) {
+function normalizeEntryAction(side, symbol = '') {
   const s = (side || '').toUpperCase();
+  const isFutures = symbol.includes(':');
+  if (isFutures) {
+    return s === 'BUY' || s === 'LONG' ? 'POSITION LONG' : 'POSITION SHORT';
+  }
   if (s === 'BUY' || s === 'LONG') return 'BUY';
   if (s === 'SELL' || s === 'SHORT') return 'SELL';
   return s.includes('BUY') ? 'BUY' : 'SELL';
@@ -181,7 +185,7 @@ export default function OrderHistoryCard() {
                 ? formatTime(r.openedAt)
                 : '-';
 
-              const entryAction = normalizeEntryAction(r.side);
+              const entryAction = normalizeEntryAction(r.side, r.symbol);
               const modeLabel = r.isPaperTrade ? 'Paper' : 'Live';
               const pnl = r.pnlPercent;
               const pnlLabel = pnl === null || pnl === undefined ? '-' : `${pnl >= 0 ? '+' : ''}${pnl}%`;
@@ -219,7 +223,14 @@ export default function OrderHistoryCard() {
                   </div>
 
                   <div className="px-3 py-2 bg-[#0b1121] text-[10px] text-slate-200 whitespace-nowrap overflow-x-auto">
-                    <span className="text-slate-400">Mode:</span> <span className="font-bold text-slate-200 font-mono">{modeLabel}</span>
+                    <span className="text-slate-400">Mode:</span>{' '}
+                    <span className={`font-bold font-mono ${
+                      r.tradeMode === 'SHADOW' ? 'text-purple-400' :
+                      r.tradeMode === 'DEMO' ? 'text-amber-500' : 
+                      'text-teal-500'
+                    }`}>
+                      {r.tradeMode ?? modeLabel}
+                    </span>
                     <span className="mx-2 text-slate-700">|</span>
                     <span className="text-slate-400">Side:</span> <span className="font-bold text-slate-200 font-mono">{entryAction}</span>
                     <span className="mx-2 text-slate-700">|</span>

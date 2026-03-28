@@ -8,27 +8,7 @@ export async function runCognitiveFutureLoop(botConfigId) {
 
   await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 Checking Market (FUTURES): ค้นหาโอกาสในตลาด + ประเมินไม้ที่เปิดอยู่ + ออเดอร์ค้าง`);
 
-  const rules = `
-    You are an Elite Futures Quant. Response MUST be valid JSON.
-    
-    === RULES ===
-    - Action: 'buy' (LONG) or 'sell' (SHORT).
-    - Provide stopLossPercent. TP is auto-calculated.
-    - Max Bullets: ${bulletsAvailable}.
-    - Active positions: review 'active_positions'. If trend changed/high risk, add to 'close_positions' with ID and reason.
-    - Open orders: review 'open_orders'. If an order is no longer appropriate, add to 'cancel_orders' with ID and reason.
-    - BE EXTREMELY CONCISE in reasoning (max 10 words).
-    
-    === OUTPUT ===
-    {
-      "strategy": "DELTA_NEUTRAL|VOLUME_BREAKOUT|DIRECTIONAL",
-      "confidence": 0-100,
-      "reasoning": "ไทยสั้นๆ",
-      "trades": [{"symbol": "BTC/USDT", "side": "buy|sell", "amount": 500, "strategy": "DIRECTIONAL", "confidence": 85, "stopLossPercent": 3.5, "sector": "L1"}],
-      "close_positions": [{"id": "uuid", "reason": "ไทยสั้นๆ"}],
-      "cancel_orders": [{"id": "orderId", "reason": "ไทยสั้นๆ"}]
-    }
-  `;
+  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[],close_positions[],cancel_orders[]. buy=LONG sell=SHORT. Include stopLossPercent. Max trades=${bulletsAvailable}. Review active_positions + open_orders. If new trade is better but capital tight, close_positions first. Futures usage <=50%. IDs in active_positions are prefixes (first 8 chars). reasoning<=10 words.`;
 
   const contextPayload = {
     trading_env: { bullets: bulletsAvailable, budget: config.allocatedPortfolioUsdt },
@@ -64,15 +44,22 @@ export async function runCognitiveFutureLoop(botConfigId) {
     }
   }
 
+  const safeTrades = Array.isArray(aiOutput?.trades) ? aiOutput.trades : [];
+  const safeConfidence = Number.isFinite(Number(aiOutput?.confidence)) ? Number(aiOutput.confidence) : 0;
+  const safeStrategy =
+    typeof aiOutput?.strategy === 'string' && aiOutput.strategy.trim().length > 0
+      ? aiOutput.strategy.trim()
+      : (safeTrades.length > 0 ? 'DIRECTIONAL' : 'NO_TRADE');
+
   const implementDetails = formatTradeDetails(aiOutput.trades || [], candidates, 'FUTURES');
-  await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ Applying Plan (FUTURES): ${implementDetails || aiOutput.strategy} (${aiOutput.confidence || 0}%)`);
+  await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ Applying Plan (FUTURES): ${implementDetails || safeStrategy} (${safeConfidence}%)`);
 
   if (aiOutput.reasoning) {
     const extra = formatReasoningInfo(aiOutput.trades || [], candidates, 'FUTURES');
     await logPhase(botConfigId, 'PLAN', `[AI REASONING] ${aiOutput.reasoning}${extra ? ` -> Plan: ${extra}` : ''}`);
   }
 
-  const trades = aiOutput.trades || [];
+  const trades = safeTrades;
   const tradeSymbols = trades.map(t => t.symbol).join(', ');
   const logMsg = trades.length > 0
     ? `[3. TASK CHECK] 📋 Preparing trades: ${trades.length} items (${tradeSymbols})`

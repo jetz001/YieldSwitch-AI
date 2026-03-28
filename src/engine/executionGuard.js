@@ -157,11 +157,11 @@ function checkMarketAvailability(client, symbol, marketType) {
  * Risk Guard: Check if it's safe to open a new position
  * Prevents over-leveraging and liquidation risks
  */
-async function checkRiskGuard(client, botConfigId, marketType, _symbol) {
+async function checkRiskGuard(client, botConfigId, marketType, _symbol, orderValueUsdt = null) {
   try {
     // Margin Usage Check (only for Futures)
     if (marketType === 'FUTURES') {
-      const balance = await client.fetchBalance();
+      const balance = await client.fetchBalance({ type: 'swap' }).catch(() => client.fetchBalance());
       
       // For Bitget V2 Futures
       const total = parseFloat(balance.total?.USDT || balance.total?.SUSDT || 0);
@@ -169,6 +169,23 @@ async function checkRiskGuard(client, botConfigId, marketType, _symbol) {
       
       if (total > 0) {
         const marginUsagePercent = (used / total) * 100;
+        const capUsdt = total * 0.5;
+        const remainingCapUsdt = capUsdt - used;
+
+        if (typeof orderValueUsdt === 'number' && Number.isFinite(orderValueUsdt)) {
+          if (remainingCapUsdt <= 0) {
+            return {
+              safe: false,
+              reason: `🚨 REJECT: ใช้เงินทุน Futures เกิน 50% แล้ว (Used: ${used.toFixed(2)} / Cap: ${capUsdt.toFixed(2)} USDT) — หากมี Position ที่ดีกว่า ให้ปิดของเดิมก่อนครับ`
+            };
+          }
+          if (orderValueUsdt > remainingCapUsdt) {
+            return {
+              safe: false,
+              reason: `🚨 REJECT: วงเงินเปิด Position (Futures) เกิน 50% ของพอร์ต — เปิดเพิ่มได้อีก ${remainingCapUsdt.toFixed(2)} USDT แต่คำสั่งนี้ใช้ ${orderValueUsdt.toFixed(2)} USDT (ถ้าไม้ใหม่ดีกว่าให้ปิดของเดิมก่อน)`
+            };
+          }
+        }
         
         // Safety threshold: 50% of futures equity used is already high for automated systems
         if (marginUsagePercent > 50) {
@@ -247,7 +264,8 @@ export async function executeStrategy(engineClientSpot, engineClientFutures, tas
         const mappedSymbol = mapAISymbolToExchange(symbol, candidates, marketType, finalClient);
 
         // [New] Risk Guard Check in IMPLEMENT phase
-        const riskCheck = await checkRiskGuard(finalClient, botConfigId, marketType, mappedSymbol);
+        const orderValueUsdt = typeof amount === 'number' ? amount : parseFloat(amount);
+        const riskCheck = await checkRiskGuard(finalClient, botConfigId, marketType, mappedSymbol, Number.isFinite(orderValueUsdt) ? orderValueUsdt : null);
         if (!riskCheck.safe) {
            await prisma.aILogStream.create({
              data: {
@@ -663,10 +681,12 @@ export async function syncState(client, botConfigId, isPaperMode = false) {
  */
 export async function forceClosePosition(client, positionId, reason) {
   try {
-    const tranche = await prisma.activeTranche.findUnique({
-      where: { id: positionId },
-      include: { BotConfig: true }
-    });
+    const tranche = positionId && positionId.length >= 30
+      ? await prisma.activeTranche.findUnique({ where: { id: positionId }, include: { BotConfig: true } })
+      : await prisma.activeTranche.findFirst({
+          where: { id: { startsWith: String(positionId || '') }, status: 'OPEN' },
+          include: { BotConfig: true }
+        });
 
     if (!tranche || tranche.status !== 'OPEN') return;
 
@@ -687,7 +707,7 @@ export async function forceClosePosition(client, positionId, reason) {
     const adjustedPnl = tranche.side === 'SHORT' ? -pnlPercent : pnlPercent;
 
     await prisma.activeTranche.update({
-      where: { id: positionId },
+      where: { id: tranche.id },
       data: {
         status: 'CLOSED',
         exitPrice,

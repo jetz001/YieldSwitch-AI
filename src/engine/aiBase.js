@@ -30,10 +30,10 @@ export async function getContext(botConfigId, marketType) {
     where: { botConfigId, status: 'OPEN' }
   });
 
-  const activePositionsForAI = openTranches.map(t => {
+  const activePositionsForAI = openTranches.slice(0, 6).map(t => {
     const tpTiers = t.tpTiers ? JSON.parse(t.tpTiers) : null;
     return {
-      id: t.id,
+      id: t.id.slice(0, 8),
       symbol: t.symbol,
       side: t.side,
       entry: t.entryPrice,
@@ -44,17 +44,17 @@ export async function getContext(botConfigId, marketType) {
 
   let openOrdersForAI = [];
   try {
-    const openOrdersRaw = await bitgetClient.fetchOpenOrders();
-    openOrdersForAI = (openOrdersRaw || []).slice(0, 12).map(o => ({
-      id: o.id,
-      symbol: o.symbol,
-      side: o.side,
-      type: o.type,
-      price: o.price,
-      amount: o.amount,
-      remaining: o.remaining,
-      status: o.status
-    }));
+    if (marketType === 'FUTURES') {
+      const openOrdersRaw = await bitgetClient.fetchOpenOrders();
+      openOrdersForAI = (openOrdersRaw || []).slice(0, 6).map(o => ({
+        id: o.id,
+        symbol: o.symbol,
+        side: o.side,
+        type: o.type,
+        price: o.price,
+        remaining: o.remaining
+      }));
+    }
   } catch (e) {
     openOrdersForAI = [];
   }
@@ -72,7 +72,7 @@ export async function getContext(botConfigId, marketType) {
     symbol: c.originalSymbol || c.symbol,
     price: c.price,
     score: c.score,
-    reason: c.reason?.substring(0, 100) // Truncate reasoning
+    reason: c.reason?.substring(0, 40)
   }));
 
   return {
@@ -101,7 +101,7 @@ export async function callLLM(llmInfo, rules, contextPayload) {
 
     const response = await client.models.generateContent({
       model: model,
-      contents: [{ role: 'user', parts: [{ text: `${rules}\n\nCONTEXT:\n${JSON.stringify(contextPayload)}` }] }],
+      contents: [{ role: 'user', parts: [{ text: `${rules}\n${JSON.stringify(contextPayload)}` }] }],
       config: genConfig
     });
     return response.text;

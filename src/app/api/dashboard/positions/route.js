@@ -21,103 +21,114 @@ export async function GET(req) {
 
     if (!config) return NextResponse.json([]);
 
-    // Parse query params for search/filter
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search')?.trim().toUpperCase() || '';
-    const statusFilter = searchParams.get('status')?.toUpperCase() || 'ALL';
+    const marketType = (searchParams.get('marketType') || config.marketType || 'FUTURES').toUpperCase();
 
-    // Build query: show ALL positions (OPEN, CLOSED, CANCELLED)
-    const whereClause = { botConfigId: config.id };
-    if (statusFilter !== 'ALL') {
-      whereClause.status = statusFilter;
-    }
-    if (search) {
-      whereClause.symbol = { contains: search, mode: 'insensitive' };
-    }
+    const isDemo = config.isPaperTrading && !!config.User?.bitgetDemoApiKey;
+    const liveKeysOk = !config.isPaperTrading && !!config.User?.bitgetApiKey;
+    if (!isDemo && !liveKeysOk) return NextResponse.json([]);
 
-    const positions = await prisma.activeTranche.findMany({
-      where: whereClause,
-      orderBy: { openedAt: 'desc' },
-      take: 100
-    });
+    const spotClient = isDemo
+      ? getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, 'SPOT')
+      : getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'SPOT');
 
-    if (positions.length === 0) return NextResponse.json([]);
+    const futuresClient = isDemo
+      ? getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, 'FUTURES')
+      : getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'FUTURES');
 
-    // Set up exchange client for real-time prices (OPEN positions only)
-    let client;
-    try {
-      if (config.isPaperTrading && config.User?.bitgetDemoApiKey) {
-        client = getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true);
-      } else if (config.User?.bitgetApiKey) {
-        client = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false);
-      }
-    } catch (e) {
-      client = null;
-    }
+    const normalizeSymbol = (s) => String(s || '').toUpperCase();
+    const normalizeFuturesSide = (raw) => {
+      const r = String(raw || '').toLowerCase();
+      if (r.includes('short')) return 'SHORT';
+      if (r.includes('sell')) return 'SHORT';
+      return 'LONG';
+    };
 
-    // Fetch open orders for matching check (only if we have a client)
-    let openOrders = [];
-    let hasExchangeConnection = false;
-    if (client) {
-      try {
-        openOrders = await client.fetchOpenOrders();
-        hasExchangeConnection = true;
-      } catch (e) {
-        console.warn('[Dashboard] Could not fetch open orders for matching check.');
-      }
-    }
+    const rows = [];
 
-    const augmentedPositions = await Promise.all(positions.map(async (pos) => {
-      // For CLOSED/CANCELLED positions, use stored data — no live fetch needed
-      if (pos.status !== 'OPEN') {
-        return {
-          ...pos,
-          currentPrice: pos.exitPrice || pos.entryPrice,
-          pnlPercent: pos.pnlUsdt && pos.originalAmount > 0
-            ? parseFloat(((pos.pnlUsdt / pos.originalAmount) * 100).toFixed(2))
-            : 0,
-          isMatched: true,
-        };
-      }
+    if (marketType === 'FUTURES' || marketType === 'MIXED') {
+      const positions = await futuresClient.fetchPositions().catch(() => []);
+      for (const p of positions) {
+        const contracts = Number(p.contracts || 0);
+        if (!Number.isFinite(contracts) || contracts <= 0) continue;
+        const symbol = p.symbol;
+        if (search && !normalizeSymbol(symbol).includes(search)) continue;
 
-      // For OPEN positions, fetch real-time data
-      if (!client) {
-        return { ...pos, currentPrice: pos.entryPrice, pnlPercent: 0, isMatched: true };
-      }
+        const entryPrice = Number(p.entryPrice || 0);
+        const currentPrice = Number(p.markPrice || p.lastPrice || p.info?.markPrice || p.info?.markPx || p.info?.last || entryPrice);
+        const side = normalizeFuturesSide(p.side || p.info?.holdSide || p.info?.posSide);
+        const pnlPercent =
+          entryPrice > 0 && Number.isFinite(currentPrice)
+            ? Number((((currentPrice - entryPrice) / entryPrice) * (side === 'SHORT' ? -1 : 1) * 100).toFixed(2))
+            : 0;
 
-      try {
-        const ticker = await client.fetchTicker(pos.symbol);
-        const currentPrice = ticker.last || ticker.close || pos.entryPrice;
-        const pnlPercent = pos.side.toUpperCase() === 'BUY'
-          ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
-          : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
-
-        // Matching logic
-        let isMatched = false;
-        const isActuallyTrading = (config.isPaperTrading && !!config.User.bitgetDemoApiKey) || !config.isPaperTrading;
-
-        if (!isActuallyTrading || pos.trancheGroupId.startsWith('sync')) {
-          isMatched = true;
-        } else if (hasExchangeConnection) {
-          const isPending = openOrders.some(o =>
-            o.symbol === pos.symbol &&
-            o.side?.toLowerCase() === pos.side?.toLowerCase()
-          );
-          isMatched = !isPending;
-        }
-
-        return {
-          ...pos,
+        rows.push({
+          id: `ex-pos-${symbol}-${side}`,
+          botConfigId: config.id,
+          symbol,
+          side,
+          status: 'OPEN',
+          trancheGroupId: 'exchange',
+          entryPrice,
+          exitPrice: null,
+          pnlUsdt: Number(p.unrealizedPnl || 0),
+          originalAmount: contracts,
+          remainingAmount: contracts,
+          isCapitalExtracted: false,
+          isPaperTrade: !!config.isPaperTrading,
+          takeProfitPrice: null,
+          stopLossPrice: null,
+          trailingStopPrice: null,
+          highestPriceReached: 0,
+          openedAt: p.datetime ? new Date(p.datetime) : null,
+          closedAt: null,
+          sector: 'OTHER',
+          tpTiers: null,
+          marketType: 'FUTURES',
           currentPrice,
-          pnlPercent: parseFloat(pnlPercent.toFixed(2)),
-          isMatched
-        };
-      } catch (e) {
-        return { ...pos, currentPrice: pos.entryPrice, pnlPercent: 0, isMatched: true };
+          pnlPercent,
+          isMatched: true
+        });
       }
-    }));
+    }
 
-    return NextResponse.json(augmentedPositions);
+    if (marketType === 'SPOT' || marketType === 'MIXED') {
+      const openOrders = await spotClient.fetchOpenOrders().catch(() => []);
+      for (const o of openOrders) {
+        const symbol = o.symbol;
+        if (search && !normalizeSymbol(symbol).includes(search)) continue;
+        rows.push({
+          id: `ex-ord-${o.id}`,
+          botConfigId: config.id,
+          symbol,
+          side: String(o.side || '').toUpperCase(),
+          status: 'OPEN',
+          trancheGroupId: 'exchange-order',
+          entryPrice: Number(o.price || 0),
+          exitPrice: null,
+          pnlUsdt: null,
+          originalAmount: Number(o.amount || 0),
+          remainingAmount: Number(o.remaining || 0),
+          isCapitalExtracted: false,
+          isPaperTrade: !!config.isPaperTrading,
+          takeProfitPrice: null,
+          stopLossPrice: null,
+          trailingStopPrice: null,
+          highestPriceReached: 0,
+          openedAt: o.datetime ? new Date(o.datetime) : null,
+          closedAt: null,
+          sector: 'OTHER',
+          tpTiers: null,
+          marketType: 'SPOT',
+          currentPrice: Number(o.price || 0),
+          pnlPercent: 0,
+          isMatched: false
+        });
+      }
+    }
+
+    return NextResponse.json(rows);
   } catch (error) {
     console.error('Dashboard Positions Error:', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

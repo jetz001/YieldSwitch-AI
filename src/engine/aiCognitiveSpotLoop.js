@@ -4,32 +4,16 @@ export async function runCognitiveSpotLoop(botConfigId) {
   const context = await getContext(botConfigId, 'SPOT');
   if (!context) return null;
 
-  const { config, candidates, bulletsAvailable, candidatesForAI, openOrdersForAI, portfolioExposure, fearGreed, btcTrend, llmInfo } = context;
+  const { config, candidates, bulletsAvailable, candidatesForAI, portfolioExposure, fearGreed, btcTrend, llmInfo } = context;
 
   await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 Checking Market (SPOT): ค้นหาโอกาสในตลาดสปอต`);
 
-  const rules = `
-    You are an Elite Spot Trader. Response MUST be valid JSON.
-    
-    === RULES ===
-    - Side: 'buy' only.
-    - Max Bullets: ${bulletsAvailable}.
-    - BE EXTREMELY CONCISE in reasoning (max 10 words).
-    
-    === OUTPUT ===
-    {
-      "strategy": "DELTA_NEUTRAL|VOLUME_BREAKOUT|DIRECTIONAL",
-      "confidence": 0-100,
-      "reasoning": "ไทยสั้นๆ",
-      "trades": [{"symbol": "BTC/USDT", "side": "buy", "amount": 500, "strategy": "DIRECTIONAL", "confidence": 85, "sector": "L1"}]
-    }
-  `;
+  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[]. Side=buy only. Max trades=${bulletsAvailable}. reasoning<=10 words.`;
 
   const contextPayload = {
     trading_env: { bullets: bulletsAvailable, budget: config.allocatedPortfolioUsdt },
     mkt_regime: { btc_trend: btcTrend, fng: fearGreed },
     portfolio: portfolioExposure,
-    open_orders: openOrdersForAI,
     candidates: candidatesForAI
   };
 
@@ -58,15 +42,22 @@ export async function runCognitiveSpotLoop(botConfigId) {
     }
   }
 
+  const safeTrades = Array.isArray(aiOutput?.trades) ? aiOutput.trades : [];
+  const safeConfidence = Number.isFinite(Number(aiOutput?.confidence)) ? Number(aiOutput.confidence) : 0;
+  const safeStrategy =
+    typeof aiOutput?.strategy === 'string' && aiOutput.strategy.trim().length > 0
+      ? aiOutput.strategy.trim()
+      : (safeTrades.length > 0 ? 'DIRECTIONAL' : 'NO_TRADE');
+
   const implementDetails = formatTradeDetails(aiOutput.trades || [], candidates, 'SPOT');
-  await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ Applying Plan (SPOT): ${implementDetails || aiOutput.strategy} (${aiOutput.confidence || 0}%)`);
+  await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ Applying Plan (SPOT): ${implementDetails || safeStrategy} (${safeConfidence}%)`);
 
   if (aiOutput.reasoning) {
     const extra = formatReasoningInfo(aiOutput.trades || [], candidates, 'SPOT');
     await logPhase(botConfigId, 'PLAN', `[AI REASONING] ${aiOutput.reasoning}${extra ? ` -> Plan: ${extra}` : ''}`);
   }
 
-  const trades = aiOutput.trades || [];
+  const trades = safeTrades;
   const tradeSymbols = trades.map(t => t.symbol).join(', ');
   const logMsg = trades.length > 0
     ? `[3. TASK CHECK] 📋 Preparing orders: ${trades.length} items (${tradeSymbols})`

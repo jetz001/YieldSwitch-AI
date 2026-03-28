@@ -161,23 +161,25 @@ export async function startEngine(botConfigId) {
                 }
               }
             }
-            
-            await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId, cycleResult.candidates || []);
 
-            // ═══════════════════════════════════════════════
-            // AI FORCE CLOSE (CLOSE UNPROFITABLE/INAPPROPRIATE)
-            // ═══════════════════════════════════════════════
+            // Close positions first to free Futures capital when AI wants to rotate positions
             if (cycleResult.aiTasks?.close_positions && cycleResult.aiTasks.close_positions.length > 0) {
-              const futuresClient = bitgetFutures; 
               for (const posToClose of cycleResult.aiTasks.close_positions) {
-                await forceClosePosition(futuresClient, posToClose.id, posToClose.reason);
+                let closed = await forceClosePosition(bitgetFutures, posToClose.id, posToClose.reason);
+                if (!closed) {
+                  closed = await forceClosePosition(bitgetSpot, posToClose.id, posToClose.reason);
+                }
               }
             }
+            
+            await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId, cycleResult.candidates || []);
           }
         } else if (cycleResult && cycleResult.errorType === 'QUOTA') {
           console.warn(`[Engine] ⚠️ Quota Exhausted. Waiting 10 minutes...`);
           nextSleepMs = 600000; 
         }
+
+        await pruneFlashData(botConfigId);
 
         await new Promise(resolve => setTimeout(resolve, nextSleepMs));
         
@@ -230,4 +232,37 @@ export function stopEngine(botConfigId) {
     console.log(`[Engine] Signaling stop for bot ${botConfigId}`);
     activeLoops.delete(botConfigId);
   }
+}
+
+async function pruneFlashData(botConfigId) {
+  try {
+    const keepLogIds = await prisma.aILogStream.findMany({
+      where: { botConfigId },
+      orderBy: { timestamp: 'desc' },
+      take: 400,
+      select: { id: true }
+    });
+    const keepLogIdSet = new Set(keepLogIds.map(x => x.id));
+    await prisma.aILogStream.deleteMany({
+      where: {
+        botConfigId,
+        ...(keepLogIdSet.size > 0 ? { id: { notIn: Array.from(keepLogIdSet) } } : {})
+      }
+    });
+
+    const keepTrancheIds = await prisma.activeTranche.findMany({
+      where: { botConfigId, status: { not: 'OPEN' } },
+      orderBy: [{ closedAt: 'desc' }, { openedAt: 'desc' }],
+      take: 200,
+      select: { id: true }
+    });
+    const keepTrancheIdSet = new Set(keepTrancheIds.map(x => x.id));
+    await prisma.activeTranche.deleteMany({
+      where: {
+        botConfigId,
+        status: { not: 'OPEN' },
+        ...(keepTrancheIdSet.size > 0 ? { id: { notIn: Array.from(keepTrancheIdSet) } } : {})
+      }
+    });
+  } catch (e) {}
 }

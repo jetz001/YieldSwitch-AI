@@ -78,11 +78,16 @@ export async function checkZombieGuard(exchangeClient, botConfigId, tickerMap = 
       where: { botConfigId, status: 'OPEN' }
     });
 
+    const isSwapClient = exchangeClient?.options?.defaultType === 'swap';
     const now = Date.now();
     const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
     let closedCount = 0;
 
     for (const tranche of tranches) {
+      const isFuturesSymbol = String(tranche.symbol || '').includes(':');
+      if (isSwapClient && !isFuturesSymbol) continue;
+      if (!isSwapClient && isFuturesSymbol) continue;
+
       const openDuration = now - new Date(tranche.openedAt).getTime();
       
       if (openDuration > TWENTY_FOUR_HOURS) {

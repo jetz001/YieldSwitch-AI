@@ -30,17 +30,15 @@ export async function GET(_req) {
 
     if (!config) return NextResponse.json({ error: 'No BotConfig found' }, { status: 404 });
 
-    const activePositions = await prisma.activeTranche.findMany({
-      where: { botConfigId: config.id, status: 'OPEN' }
-    });
-
-    const closedPositions = await prisma.activeTranche.findMany({
-      where: { botConfigId: config.id, status: 'CLOSED' }
-    });
-
-    const totalPnl = closedPositions.reduce((acc, p) => acc + (p.pnlUsdt || 0), 0);
-    const paperPnl = activePositions.filter(p => p.isPaperTrade).reduce((acc, p) => acc + (p.pnlUsdt || 0), 0);
-    let initialCapital = config.isPaperTrading ? config.paperBalanceUsdt : config.allocatedPortfolioUsdt;
+    const extractMarketTypeFromDirectives = (directives) => {
+      const text = String(directives || '');
+      const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
+      if (marker?.[1]) return marker[1].toUpperCase();
+      const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
+      if (alt?.[1]) return alt[1].toUpperCase();
+      return null;
+    };
+    const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
     
     const isDemo = config.isPaperTrading && !!config.User.bitgetDemoApiKey;
     const isLive = !config.isPaperTrading && !!config.User.bitgetApiKey;
@@ -50,9 +48,10 @@ export async function GET(_req) {
     if (isLive || isDemo) {
       try {
         const apiKey = isDemo ? config.User.bitgetDemoApiKey : config.User.bitgetApiKey;
-        const apiSecret = isDemo ? config.User.bitgetDemoApiSecret : config.User.bitgetApiKeySecret;
+        const apiSecret = isDemo ? config.User.bitgetDemoApiSecret : config.User.bitgetApiSecret;
         const apiPass = isDemo ? config.User.bitgetDemoPassphrase : config.User.bitgetPassphrase;
-        const bitgetClient = getBitgetClient(apiKey, apiSecret, apiPass, isDemo);
+        const spotClient = getBitgetClient(apiKey, apiSecret, apiPass, isDemo, 'SPOT');
+        const futuresClient = getBitgetClient(apiKey, apiSecret, apiPass, isDemo, 'FUTURES');
 
         let walletAssetsValueUsdt = 0;
         let assetsMap = {};
@@ -62,9 +61,9 @@ export async function GET(_req) {
         let spotValueUsdt = 0;
         let futureValueUsdt = 0;
 
-        const fetchBal = async (type) => {
+        const fetchBal = async (client, type) => {
           try {
-            const bal = await bitgetClient.fetchBalance({ type });
+            const bal = await client.fetchBalance({ type });
             for (const coin in bal.total || {}) {
               const total = parseFloat(bal.total[coin] || 0);
               if (total > 0) {
@@ -81,8 +80,8 @@ export async function GET(_req) {
           } catch (e) {}
         };
 
-        await fetchBal('swap');
-        await fetchBal('spot');
+        await fetchBal(futuresClient, 'swap');
+        await fetchBal(spotClient, 'spot');
 
         const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
         const stableSet = new Set(stablecoins);
@@ -95,20 +94,42 @@ export async function GET(_req) {
         
         try {
           if (Object.keys(assetsMap).length > 0) {
-            await bitgetClient.loadMarkets();
+            await futuresClient.loadMarkets();
+            await spotClient.loadMarkets();
           }
         } catch (e) {}
 
-        // Positions valuation (Futures only)
+        // Positions valuation (Futures only) + count open positions
+        let openPositionsCount = 0;
+        let openOrdersCount = 0;
+        let unrealizedPnlTotal = 0;
         try {
-          const positions = await bitgetClient.fetchPositions();
+          const positions = await futuresClient.fetchPositions();
           for (const pos of positions) {
             if (parseFloat(pos.contracts) > 0) {
+              openPositionsCount += 1;
               const upnl = parseFloat(pos.unrealizedPnl || 0);
-              futureValueUsdt += upnl;
+              unrealizedPnlTotal += upnl;
             }
           }
         } catch (e) {}
+
+        try {
+          const spotOpenOrders = await spotClient.fetchOpenOrders().catch(() => []);
+          const futuresOpenOrders = await futuresClient.fetchOpenOrders().catch(() => []);
+          if (marketType === 'SPOT') openOrdersCount = (spotOpenOrders || []).length;
+          else if (marketType === 'FUTURES') openOrdersCount = (futuresOpenOrders || []).length;
+          else openOrdersCount = (spotOpenOrders || []).length + (futuresOpenOrders || []).length;
+        } catch (e) {}
+
+        const openCount =
+          marketType === 'SPOT'
+            ? openOrdersCount
+            : marketType === 'FUTURES'
+              ? openPositionsCount
+              : openOrdersCount + openPositionsCount;
+
+        const portfolioHealth = Math.max(0, Math.min(100, 100 - (openCount * 2)));
 
         // Price non-stable assets for both tabs
         const priceAsset = async (asset) => {
@@ -117,8 +138,8 @@ export async function GET(_req) {
           const candidates = [`${asset.coin}/USDT`, `${asset.coin}/USDT:USDT`, `${asset.coin}/USD` ];
           for (const sym of candidates) {
             try {
-              if (bitgetClient.markets && bitgetClient.markets[sym] === undefined) continue;
-              const ticker = await bitgetClient.fetchTicker(sym);
+              if (futuresClient.markets && futuresClient.markets[sym] === undefined && spotClient.markets && spotClient.markets[sym] === undefined) continue;
+              const ticker = await (sym.includes(':') ? futuresClient.fetchTicker(sym) : spotClient.fetchTicker(sym));
               const last = ticker?.last ?? ticker?.close;
               if (typeof last === 'number' && Number.isFinite(last) && last > 0) { currentPrice = last; break; }
             } catch (e) {}
@@ -136,14 +157,14 @@ export async function GET(_req) {
         return NextResponse.json({
           isAutopilot: config.isActive,
           isPaperTrading: config.isPaperTrading,
-          marketType: config.marketType || 'MIXED',
+          marketType,
           connectionStatus: 'CONNECTED',
-          initialCapital,
-          extractedCapital: totalPnl > 0 ? totalPnl : 0,
+          initialCapital: config.allocatedPortfolioUsdt,
+          extractedCapital: 0,
           riskCapital: config.allocatedPortfolioUsdt,
           targetProfit: config.targetProfitUsdt,
-          portfolioHealth: 100 - (activePositions.length * 2),
-          currentPnl: totalPnl + paperPnl,
+          portfolioHealth,
+          currentPnl: unrealizedPnlTotal,
           walletAssetsValueUsdt,
           spotValueUsdt,
           futureValueUsdt,
@@ -160,14 +181,14 @@ export async function GET(_req) {
     return NextResponse.json({
       isAutopilot: config.isActive,
       isPaperTrading: config.isPaperTrading,
-      marketType: config.marketType || 'MIXED',
+      marketType,
       connectionStatus,
-      initialCapital,
-      extractedCapital: totalPnl > 0 ? totalPnl : 0,
+      initialCapital: config.allocatedPortfolioUsdt,
+      extractedCapital: 0,
       riskCapital: config.allocatedPortfolioUsdt,
       targetProfit: config.targetProfitUsdt,
-      portfolioHealth: 100 - (activePositions.length * 2),
-      currentPnl: totalPnl + paperPnl,
+      portfolioHealth: 0,
+      currentPnl: 0,
       walletAssetsValueUsdt: 0,
       aiDirectives: config.aiDirectives || "เน้นความปลอดภัยและกำไรที่สม่ำเสมอ",
       assets: []

@@ -40,9 +40,9 @@ export async function GET(req) {
     const normalizeSymbol = (s) => String(s || '').toUpperCase();
     const normalizeFuturesSide = (raw) => {
       const r = String(raw || '').toLowerCase();
-      if (r.includes('short')) return 'SHORT';
-      if (r.includes('sell')) return 'SHORT';
-      return 'LONG';
+      if (r.includes('short')) return 'SELL';
+      if (r.includes('sell')) return 'SELL';
+      return 'BUY';
     };
 
     const rows = [];
@@ -58,9 +58,11 @@ export async function GET(req) {
         const entryPrice = Number(p.entryPrice || 0);
         const currentPrice = Number(p.markPrice || p.lastPrice || p.info?.markPrice || p.info?.markPx || p.info?.last || entryPrice);
         const side = normalizeFuturesSide(p.side || p.info?.holdSide || p.info?.posSide);
+        const baseAmount = contracts;
+        const notionalUsdt = Number.isFinite(currentPrice) && currentPrice > 0 ? baseAmount * currentPrice : 0;
         const pnlPercent =
           entryPrice > 0 && Number.isFinite(currentPrice)
-            ? Number((((currentPrice - entryPrice) / entryPrice) * (side === 'SHORT' ? -1 : 1) * 100).toFixed(2))
+            ? Number((((currentPrice - entryPrice) / entryPrice) * (side === 'SELL' ? -1 : 1) * 100).toFixed(2))
             : 0;
 
         rows.push({
@@ -73,8 +75,8 @@ export async function GET(req) {
           entryPrice,
           exitPrice: null,
           pnlUsdt: Number(p.unrealizedPnl || 0),
-          originalAmount: contracts,
-          remainingAmount: contracts,
+          originalAmount: notionalUsdt,
+          remainingAmount: notionalUsdt,
           isCapitalExtracted: false,
           isPaperTrade: !!config.isPaperTrading,
           takeProfitPrice: null,

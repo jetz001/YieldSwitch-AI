@@ -26,26 +26,56 @@ export async function getContext(botConfigId, marketType) {
   const fearGreed = await getFearAndGreedIndex();
   const btcTrend = await getBTCTrend(bitgetClient);
 
-  const openTranches = await prisma.activeTranche.findMany({
-    where: { botConfigId, status: 'OPEN' }
-  });
+  const normalizeFuturesSide = (raw) => {
+    const r = String(raw || '').toLowerCase();
+    if (r.includes('short')) return 'SHORT';
+    if (r.includes('sell')) return 'SHORT';
+    return 'LONG';
+  };
 
-  const activePositionsForAI = openTranches.slice(0, 6).map(t => {
-    const tpTiers = t.tpTiers ? JSON.parse(t.tpTiers) : null;
-    return {
-      id: t.id.slice(0, 8),
-      symbol: t.symbol,
-      side: t.side,
-      entry: t.entryPrice,
-      sl: t.stopLossPrice,
-      tp: tpTiers?.tp1?.price || null
-    };
-  });
-
+  let activePositionsForAI = [];
   let openOrdersForAI = [];
+  let openCount = 0;
+
   try {
-    if (marketType === 'FUTURES') {
-      const openOrdersRaw = await bitgetClient.fetchOpenOrders();
+    if (String(marketType || '').toUpperCase() === 'FUTURES') {
+      const positions = await bitgetClient.fetchPositions().catch(() => []);
+      const openPositions = (positions || []).filter(p => {
+        const contracts = Number(p.contracts || 0);
+        return Number.isFinite(contracts) && contracts > 0;
+      });
+      openCount = openPositions.length;
+      activePositionsForAI = openPositions.slice(0, 6).map(p => {
+        const side = normalizeFuturesSide(p.side || p.info?.holdSide || p.info?.posSide);
+        const entry = Number(p.entryPrice || 0);
+        const mark = Number(p.markPrice || p.lastPrice || p.info?.markPrice || p.info?.markPx || p.info?.last || 0);
+        const currentPrice = Number.isFinite(mark) && mark > 0 ? mark : entry;
+        const pnlPercent =
+          entry > 0 && Number.isFinite(currentPrice)
+            ? Number((((currentPrice - entry) / entry) * (side === 'SHORT' ? -1 : 1) * 100).toFixed(2))
+            : 0;
+        const upnl = Number(p.unrealizedPnl || 0);
+        const contracts = Number(p.contracts || 0);
+        const notionalUsdt =
+          Number.isFinite(contracts) && Number.isFinite(currentPrice) && currentPrice > 0
+            ? Number((contracts * currentPrice).toFixed(2))
+            : 0;
+        return {
+          id: `${p.symbol}|${side}`,
+          symbol: p.symbol,
+          side,
+          entry,
+          mark: currentPrice,
+          contracts,
+          notionalUsdt,
+          upnl,
+          pnlPercent,
+          sl: null,
+          tp: null
+        };
+      });
+
+      const openOrdersRaw = await bitgetClient.fetchOpenOrders().catch(() => []);
       openOrdersForAI = (openOrdersRaw || []).slice(0, 6).map(o => ({
         id: o.id,
         symbol: o.symbol,
@@ -54,19 +84,24 @@ export async function getContext(botConfigId, marketType) {
         price: o.price,
         remaining: o.remaining
       }));
+    } else if (String(marketType || '').toUpperCase() === 'SPOT') {
+      const openOrdersRaw = await bitgetClient.fetchOpenOrders().catch(() => []);
+      openCount = (openOrdersRaw || []).length;
     }
   } catch (e) {
+    activePositionsForAI = [];
     openOrdersForAI = [];
+    openCount = 0;
   }
 
-  const portfolioExposure = openTranches.reduce((acc, t) => {
-    const sector = getSectorForSymbol(t.symbol);
+  const portfolioExposure = activePositionsForAI.reduce((acc, p) => {
+    const sector = getSectorForSymbol(p.symbol);
     acc[sector] = (acc[sector] || 0) + 1;
     return acc;
   }, {});
 
   const maxBullets = config.maxSplits || 10;
-  const bulletsAvailable = Math.max(0, maxBullets - openTranches.length);
+  const bulletsAvailable = Math.max(0, maxBullets - openCount);
 
   const candidatesForAI = candidates.slice(0, 2).map(c => ({
     symbol: c.originalSymbol || c.symbol,

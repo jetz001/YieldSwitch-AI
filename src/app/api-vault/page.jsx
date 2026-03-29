@@ -11,6 +11,15 @@ export default function ApiVault() {
   const [testingBitget, setTestingBitget] = useState(false);
   const [status, setStatus] = useState({ ai: 'pending', bitget: 'pending' });
 
+  const [ratePlan, setRatePlan] = useState({
+    rpm: '',
+    tpmIn: '',
+    rpd: '',
+    tokensPerCycle: '4000',
+    intervalMin: '5',
+    bots: '1'
+  });
+
   const [form, setForm] = useState({
     bitgetApiKey: '',
     bitgetApiSecret: '',
@@ -32,6 +41,23 @@ export default function ApiVault() {
     fetchConfig();
   }, []);
 
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('yieldswitch_ai_rate_plan');
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        setRatePlan(prev => ({ ...prev, ...parsed }));
+      }
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('yieldswitch_ai_rate_plan', JSON.stringify(ratePlan));
+    } catch (e) {}
+  }, [ratePlan]);
+
   const fetchConfig = async () => {
     try {
       const res = await fetch('/api/users/me');
@@ -47,6 +73,30 @@ export default function ApiVault() {
       setLoading(false);
     }
   };
+
+  const parsePositiveNumber = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  const rpmCap = parsePositiveNumber(ratePlan.rpm);
+  const tpmInCap = parsePositiveNumber(ratePlan.tpmIn);
+  const rpdCap = parsePositiveNumber(ratePlan.rpd);
+  const tokensPerCycle = parsePositiveNumber(ratePlan.tokensPerCycle) || 4000;
+  const intervalMin = parsePositiveNumber(ratePlan.intervalMin) || 5;
+  const bots = parsePositiveNumber(ratePlan.bots) || 1;
+  const requestsPerCycle = 1;
+
+  const cyclesPerMinPerBot = 1 / intervalMin;
+  const reqPerMinEst = bots * requestsPerCycle * cyclesPerMinPerBot;
+  const reqPerDayEst = reqPerMinEst * 60 * 24;
+  const tpmInEst = bots * tokensPerCycle * cyclesPerMinPerBot;
+
+  const botsByRpm = rpmCap ? Math.floor((rpmCap * intervalMin) / requestsPerCycle) : null;
+  const botsByRpd = rpdCap ? Math.floor(rpdCap / ((60 * 24 * requestsPerCycle) / intervalMin)) : null;
+  const botsByTpm = tpmInCap ? Math.floor(tpmInCap / (tokensPerCycle / intervalMin)) : null;
+  const botsFeasible = [botsByRpm, botsByRpd, botsByTpm].filter(x => typeof x === 'number' && Number.isFinite(x));
+  const maxBotsSuggested = botsFeasible.length ? Math.max(0, Math.min(...botsFeasible)) : null;
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -348,6 +398,114 @@ export default function ApiVault() {
                     </>
                   )}
                 </select>
+              </div>
+
+              <div className="mb-6">
+                <div className="bg-[#0b1121] border border-slate-800 rounded-2xl p-5">
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                      <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Rate Limits</div>
+                      <div className="text-sm font-bold text-slate-100 font-thai mt-1">ตัวช่วยวิเคราะห์โควต้า AI</div>
+                      <div className="text-[10px] text-slate-500 font-thai mt-1 leading-relaxed">
+                        ใส่โควต้าตามแพ็กเกจ/บัญชีของคุณ แล้วระบบจะประเมินว่าโหมด Auto Pilot จะกิน RPM/TPM/RPD เท่าไหร่
+                      </div>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-2 bg-teal-500/10 border border-teal-500/20 text-teal-300 px-3 py-1.5 rounded-full text-[10px] font-bold tracking-widest">
+                      <Zap size={12} />
+                      RPM / TPM / RPD
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-[#111827] border border-slate-800 rounded-xl p-3">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">RPM</div>
+                      <div className="text-xs text-slate-400 font-thai mt-1">คำขอต่อนาที</div>
+                      <input
+                        value={ratePlan.rpm}
+                        onChange={(e) => setRatePlan(p => ({ ...p, rpm: e.target.value }))}
+                        placeholder="เช่น 60"
+                        className="mt-2 w-full bg-[#0b1121] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+
+                    <div className="bg-[#111827] border border-slate-800 rounded-xl p-3">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">TPM (IN)</div>
+                      <div className="text-xs text-slate-400 font-thai mt-1">โทเค็นต่อนาที (อินพุต)</div>
+                      <input
+                        value={ratePlan.tpmIn}
+                        onChange={(e) => setRatePlan(p => ({ ...p, tpmIn: e.target.value }))}
+                        placeholder="เช่น 1000000"
+                        className="mt-2 w-full bg-[#0b1121] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+
+                    <div className="bg-[#111827] border border-slate-800 rounded-xl p-3">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">RPD</div>
+                      <div className="text-xs text-slate-400 font-thai mt-1">คำขอต่อวัน</div>
+                      <input
+                        value={ratePlan.rpd}
+                        onChange={(e) => setRatePlan(p => ({ ...p, rpd: e.target.value }))}
+                        placeholder="เช่น 10000"
+                        className="mt-2 w-full bg-[#0b1121] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3 mt-3">
+                    <div className="bg-[#111827] border border-slate-800 rounded-xl p-3">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Tokens/รอบ</div>
+                      <div className="text-xs text-slate-400 font-thai mt-1">เฉพาะอินพุต</div>
+                      <input
+                        value={ratePlan.tokensPerCycle}
+                        onChange={(e) => setRatePlan(p => ({ ...p, tokensPerCycle: e.target.value }))}
+                        placeholder="เช่น 4000"
+                        className="mt-2 w-full bg-[#0b1121] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+
+                    <div className="bg-[#111827] border border-slate-800 rounded-xl p-3">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">รอบ/บอท</div>
+                      <div className="text-xs text-slate-400 font-thai mt-1">นาทีต่อ 1 รอบ</div>
+                      <input
+                        value={ratePlan.intervalMin}
+                        onChange={(e) => setRatePlan(p => ({ ...p, intervalMin: e.target.value }))}
+                        placeholder="เช่น 5"
+                        className="mt-2 w-full bg-[#0b1121] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+
+                    <div className="bg-[#111827] border border-slate-800 rounded-xl p-3">
+                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">จำนวนบอท</div>
+                      <div className="text-xs text-slate-400 font-thai mt-1">บอทที่รันพร้อมกัน</div>
+                      <input
+                        value={ratePlan.bots}
+                        onChange={(e) => setRatePlan(p => ({ ...p, bots: e.target.value }))}
+                        placeholder="เช่น 1"
+                        className="mt-2 w-full bg-[#0b1121] border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-teal-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 bg-slate-900/40 border border-slate-800 rounded-xl p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Estimator</div>
+                        <div className="text-xs text-slate-200 font-thai mt-1">
+                          ใช้งานประมาณ: {reqPerMinEst.toFixed(2)} RPM · {tpmInEst.toFixed(0)} TPM(IN) · {reqPerDayEst.toFixed(0)} RPD
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Max Bots</div>
+                        <div className="text-xs text-slate-200 font-thai mt-1">
+                          {maxBotsSuggested === null ? '-' : `${maxBotsSuggested} บอท`}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-thai mt-2 leading-relaxed">
+                      สูตรโดยประมาณ: 1 บอท = 1 คำขอ/รอบ · รอบ/นาที = 1 ÷ (นาทีต่อรอบ) · TPM(IN) = tokens/รอบ × รอบ/นาที
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="mb-8">

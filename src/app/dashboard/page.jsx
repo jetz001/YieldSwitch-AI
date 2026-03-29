@@ -393,13 +393,13 @@ export default function Dashboard() {
                           <div className="font-bold text-slate-200 text-sm">{pos.symbol}</div>
                           <div className={`text-[10px] uppercase tracking-wider ${
                             pos.symbol.includes(':') 
-                              ? (pos.side.toUpperCase() === 'BUY' ? 'text-teal-400' : 'text-rose-400')
+                              ? (['BUY', 'LONG'].includes(String(pos.side || '').toUpperCase()) ? 'text-teal-400' : 'text-rose-400')
                               : 'text-teal-400'
                           }`}>
                             {(() => {
                               const isFutures = pos.symbol.includes(':');
                               if (isFutures) {
-                                return pos.side.toUpperCase() === 'BUY' ? 'POSITION LONG' : 'POSITION SHORT';
+                                return ['BUY', 'LONG'].includes(String(pos.side || '').toUpperCase()) ? 'POSITION LONG' : 'POSITION SHORT';
                               }
                               return `${pos.side.toUpperCase()} / $${pos.remainingAmount.toLocaleString()} USDT`;
                             })()}

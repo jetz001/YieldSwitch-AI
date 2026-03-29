@@ -1,8 +1,7 @@
 import { runCognitiveLoop } from './aiCognitiveDualLoop.js';
 import { checkZeroBalance } from './guards/balanceGuard.js';
-import { executeStrategy, forceClosePosition } from './executionGuard.js';
-import { syncState } from './executionGuard.js';
-import { checkGlobalCircuitBreaker, checkZombieGuard, tickMathGuard } from './mathGuard.js';
+import { executeStrategy, closePositionBySymbol } from './executionGuard.js';
+import { checkGlobalCircuitBreaker } from './mathGuard.js';
 import { getBitgetClient } from '../services/bitget.js';
 import { PrismaClient } from '@prisma/client';
 import { logPhase } from './aiBase.js';
@@ -100,26 +99,7 @@ export async function startEngine(botConfigId) {
           }
         }
 
-        // ═══════════════════════════════════════════════
-        // §3 ZOMBIE & MATH GUARD
-        // ═══════════════════════════════════════════════
-        let tickerMap = {};
-        if (exchangeClient) {
-          try {
-            tickerMap = await exchangeClient.fetchTickers();
-            await checkZombieGuard(exchangeClient, botConfigId, tickerMap);
-          } catch (e) {}
-        }
-
         let nextSleepMs = 300000; // 5 mins
-        if (exchangeClient) {
-          const openTranches = await prisma.activeTranche.findMany({
-            where: { botConfigId, status: 'OPEN' }
-          });
-          for (const tranche of openTranches) {
-            await tickMathGuard(exchangeClient, tranche, tickerMap[tranche.symbol], !!Object.keys(tickerMap).length);
-          }
-        }
 
         // ═══════════════════════════════════════════════
         // AI COGNITIVE LOOP
@@ -165,9 +145,32 @@ export async function startEngine(botConfigId) {
             // Close positions first to free Futures capital when AI wants to rotate positions
             if (cycleResult.aiTasks?.close_positions && cycleResult.aiTasks.close_positions.length > 0) {
               for (const posToClose of cycleResult.aiTasks.close_positions) {
-                let closed = await forceClosePosition(bitgetFutures, posToClose.id, posToClose.reason);
+                const raw =
+                  typeof posToClose === 'string'
+                    ? posToClose.trim()
+                    : String(posToClose?.symbol || posToClose?.id || '').trim();
+                const rawParts = raw.includes('|') ? raw.split('|') : [raw];
+                const closeSymbol = rawParts[0];
+                if (!closeSymbol) continue;
+                const safeReason =
+                  typeof posToClose?.reason === 'string' && posToClose.reason.trim().length > 0
+                    ? posToClose.reason.trim()
+                    : '-';
+                const closeSideRaw = posToClose?.side ? String(posToClose.side).toUpperCase() : null;
+                let closeSide =
+                  closeSideRaw === 'BUY' || closeSideRaw === 'LONG'
+                    ? 'LONG'
+                    : closeSideRaw === 'SELL' || closeSideRaw === 'SHORT'
+                      ? 'SHORT'
+                      : null;
+                if (!closeSide && rawParts.length >= 2) {
+                  const inferred = String(rawParts[1] || '').toUpperCase();
+                  closeSide = inferred === 'SHORT' ? 'SHORT' : inferred === 'LONG' ? 'LONG' : null;
+                }
+
+                let closed = await closePositionBySymbol(bitgetFutures, botConfigId, closeSymbol, closeSide, safeReason);
                 if (!closed) {
-                  closed = await forceClosePosition(bitgetSpot, posToClose.id, posToClose.reason);
+                  closed = await closePositionBySymbol(bitgetSpot, botConfigId, closeSymbol, closeSide, safeReason);
                 }
               }
             }
@@ -218,8 +221,6 @@ export async function initEngine() {
     console.log(`[Engine Debug] Found ${activeConfigs.length} active bots in database.`);
     for (const config of activeConfigs) {
       console.log(`[Engine Debug] Resuming bot: ${config.id}`);
-      const client = getExchangeClient(config);
-      if (client) await syncState(client, config.id, config.isPaperTrading);
       startEngine(config.id);
     }
   } catch (error) {
@@ -250,19 +251,5 @@ async function pruneFlashData(botConfigId) {
       }
     });
 
-    const keepTrancheIds = await prisma.activeTranche.findMany({
-      where: { botConfigId, status: { not: 'OPEN' } },
-      orderBy: [{ closedAt: 'desc' }, { openedAt: 'desc' }],
-      take: 200,
-      select: { id: true }
-    });
-    const keepTrancheIdSet = new Set(keepTrancheIds.map(x => x.id));
-    await prisma.activeTranche.deleteMany({
-      where: {
-        botConfigId,
-        status: { not: 'OPEN' },
-        ...(keepTrancheIdSet.size > 0 ? { id: { notIn: Array.from(keepTrancheIdSet) } } : {})
-      }
-    });
   } catch (e) {}
 }

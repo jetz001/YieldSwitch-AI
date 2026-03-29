@@ -6,9 +6,9 @@ export async function runCognitiveSpotLoop(botConfigId) {
 
   const { config, candidates, bulletsAvailable, candidatesForAI, portfolioExposure, fearGreed, btcTrend, llmInfo } = context;
 
-  await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 Checking Market (SPOT): ค้นหาโอกาสในตลาดสปอต`);
+  await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 Checking Market (SPOT): candidate ${candidatesForAI?.length || 0} รายการ, bullets ${bulletsAvailable}`);
 
-  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[]. Side=buy only. Max trades=${bulletsAvailable}. reasoning<=10 words.`;
+  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" only. amount is USDT value. Max trades=${bulletsAvailable}. reasoning<=10 words.`;
 
   const contextPayload = {
     trading_env: { bullets: bulletsAvailable, budget: config.allocatedPortfolioUsdt },

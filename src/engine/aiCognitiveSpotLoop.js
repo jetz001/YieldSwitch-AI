@@ -8,7 +8,7 @@ export async function runCognitiveSpotLoop(botConfigId) {
 
   await logPhase(botConfigId, 'PLAN', `[1. PLAN] 🧠 Checking Market (SPOT): candidate ${candidatesForAI?.length || 0} รายการ, bullets ${bulletsAvailable}`);
 
-  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" only. amount is USDT value. Max trades=${bulletsAvailable}. reasoning<=10 words.`;
+  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" only. amount is USDT value. Max trades=${bulletsAvailable}. reasoning: technical summary (max 35 words; include RSI/EMA/Trend context).`;
 
   const contextPayload = {
     trading_env: { bullets: bulletsAvailable, budget: config.allocatedPortfolioUsdt },
@@ -35,7 +35,9 @@ export async function runCognitiveSpotLoop(botConfigId) {
       retryCount++;
       if (retryCount > maxRetries) {
         console.error(`[AI Spot Loop] JSON Parse Error after ${maxRetries} retries:`, parseErr.message);
-        return { status: 'FAILED', errorType: 'PARSE', message: parseErr.message };
+        aiOutput = { strategy: 'NO_TRADE', confidence: 0, reasoning: 'fallback', trades: [] };
+        await logPhase(botConfigId, 'PLAN', `[AI REASONING] ใช้โหมดสำรอง: ไม่สามารถแปลง JSON ได้ — ดำเนินการแบบ NO_TRADE`);
+        break;
       }
       console.warn(`[AI Spot Loop] JSON Parse failed, retrying (${retryCount}/${maxRetries})...`);
       await new Promise(resolve => setTimeout(resolve, 1000));

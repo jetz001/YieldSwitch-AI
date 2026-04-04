@@ -1,6 +1,4 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../lib/db.js';
 
 /**
  * AI Security Oracle: Detects API abuse and Rate Limiting anomalies

@@ -13,7 +13,7 @@ export async function runCognitiveFutureLoop(botConfigId) {
     `[1. PLAN] 🧠 Checking Market (FUTURES): โพสิชันเปิดอยู่ ${activePositionsForAI?.length || 0} รายการ, ออเดอร์ค้าง ${openOrdersForAI?.length || 0} รายการ`
   );
 
-  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[],close_positions[],cancel_orders[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" or "sell" only. buy=LONG sell=SHORT. amount is USDT value. Max trades=${bulletsAvailable}. Review active_positions + open_orders. You MUST manage existing positions: decide HOLD vs CLOSE to take profit or cut loss. Use close_positions even if no new trades. If capital tight and a new trade is better, close_positions first. Futures usage <=50%. close_positions items must include {symbol,side,reason} where side is LONG or SHORT. cancel_orders items must include {id,reason}. Add optional key position_review(string) summarizing what to do with current positions. reasoning<=10 words.`;
+  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[],close_positions[],cancel_orders[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" or "sell" only. buy=LONG sell=SHORT. amount is USDT value (MIN 5 USDT). Max trades=${bulletsAvailable}. Review active_positions + open_orders. You MUST manage existing positions: decide HOLD vs CLOSE to take profit or cut loss. Use close_positions even if no new trades. If capital tight and a new trade is better, close_positions first. Futures usage <=50%. close_positions items must include {symbol,side,reason} where side is LONG or SHORT. cancel_orders items must include {id,reason}. Add optional key position_review(string) summarizing what to do with current positions. reasoning: technical summary (max 35 words; include RSI/EMA/Trend context).`;
 
   const contextPayload = {
     trading_env: { bullets: bulletsAvailable, budget: config.allocatedPortfolioUsdt },
@@ -31,7 +31,18 @@ export async function runCognitiveFutureLoop(botConfigId) {
   while (retryCount <= maxRetries) {
     try {
       const raw = await callLLM(llmInfo, rules, contextPayload);
-      aiOutput = JSON.parse(cleanJson(raw));
+      const rawLength = raw?.length || 0;
+      console.log(`[AI Future Loop] Raw response length: ${rawLength}`);
+      
+      const cleaned = cleanJson(raw);
+      const cleanedLength = cleaned?.length || 0;
+      console.log(`[AI Future Loop] Cleaned JSON length: ${cleanedLength}`);
+      
+      aiOutput = JSON.parse(cleaned);
+      console.log(`[AI Future Loop] JSON parsing successful`);
+      
+      const reasoning = aiOutput.reasoning || 'วิเคราะห์ข้อมูลเสร็จสิ้น กำลังสรุปแผนการเทรด...';
+      await logPhase(botConfigId, 'PLAN', `[AI REASONING] ${reasoning}`);
       break; // Success
     } catch (parseErr) {
       if (parseErr.message?.includes('429') || parseErr.message?.includes('quota')) {
@@ -42,9 +53,12 @@ export async function runCognitiveFutureLoop(botConfigId) {
       retryCount++;
       if (retryCount > maxRetries) {
         console.error(`[AI Future Loop] JSON Parse Error after ${maxRetries} retries:`, parseErr.message);
-        return { status: 'FAILED', errorType: 'PARSE', message: parseErr.message };
+        aiOutput = { strategy: 'NO_TRADE', confidence: 0, reasoning: 'fallback', trades: [], close_positions: [], cancel_orders: [] };
+        await logPhase(botConfigId, 'PLAN', `[AI ERROR] ไม่สามารถแปลง JSON ได้หลังจากพยายาม ${maxRetries} ครั้ง: ${parseErr.message.substring(0, 50)}...`);
+        break;
       }
       console.warn(`[AI Future Loop] JSON Parse failed, retrying (${retryCount}/${maxRetries})...`);
+      await logPhase(botConfigId, 'PLAN', `[AI DEBUG] JSON ผิดพลาด กำลังลองใหม่ (${retryCount}/${maxRetries})`);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
@@ -106,7 +120,7 @@ export async function runCognitiveFutureLoop(botConfigId) {
 
       const amountFromAI = Number(t?.amount);
       const valueUsdt =
-        Number.isFinite(amountFromAI) && amountFromAI > 0
+        Number.isFinite(amountFromAI) && amountFromAI >= 5
           ? amountFromAI
           : Math.max(5, defaultUsdt);
 
@@ -118,9 +132,16 @@ export async function runCognitiveFutureLoop(botConfigId) {
         continue;
       }
 
-      const amountBaseRaw = valueUsdt / price;
-      const precisionAmount = client.amountToPrecision(mappedSymbol, amountBaseRaw);
-      const finalAmount = parseFloat(precisionAmount);
+      let finalAmount = 0;
+      try {
+        const amountBaseRaw = valueUsdt / price;
+        const precisionAmount = client.amountToPrecision(mappedSymbol, amountBaseRaw);
+        finalAmount = parseFloat(precisionAmount);
+      } catch (e) {
+        console.warn(`[AI Future Loop] precision error for ${mappedSymbol}:`, e.message);
+        stats.tooSmall += 1;
+        continue;
+      }
 
       const minAmount = m.limits?.amount?.min || 0;
       const amountPrecisionDigits = Number.isFinite(Number(m.precision?.amount)) ? Number(m.precision.amount) : null;
@@ -134,7 +155,7 @@ export async function runCognitiveFutureLoop(botConfigId) {
 
       const minCost = m.limits?.cost?.min || 0;
       const currentCost = finalAmount * price;
-      if (minCost > 0 && currentCost < minCost) {
+      if ( (minCost > 0 && currentCost < minCost) || currentCost < 2 ) {
         stats.tooSmall += 1;
         continue;
       }
@@ -154,7 +175,11 @@ export async function runCognitiveFutureLoop(botConfigId) {
 
   if (aiOutput.reasoning) {
     const extra = formatReasoningInfo(aiOutput.trades || [], candidates, 'FUTURES');
-    await logPhase(botConfigId, 'PLAN', `[AI REASONING] ${aiOutput.reasoning}${extra ? ` -> Plan: ${extra}` : ''}`);
+    if (extra) {
+      await logPhase(botConfigId, 'PLAN', `[AI PLAN] ${extra}`);
+    }
+  } else {
+    await logPhase(botConfigId, 'PLAN', `[AI REASONING] ระบบตรวจสอบตลาดแล้ว ไม่พบกลยุทธ์ที่ชัดเจนในรอบนี้ (Wait & See)`);
   }
 
   if (typeof aiOutput?.position_review === 'string' && aiOutput.position_review.trim().length > 0) {

@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Activity, Terminal } from 'lucide-react';
+import { Activity, Terminal, X } from 'lucide-react';
 
-export default function CognitiveLogCard({ aiDirectives }) {
+export default function CognitiveLogCard({ aiDirectives, onClose }) {
   const cleanedDirectives = (() => {
     const text = String(aiDirectives || '');
     return text
@@ -61,6 +61,15 @@ export default function CognitiveLogCard({ aiDirectives }) {
             <div className="w-2 h-2 rounded-full bg-amber-500/20 border border-amber-500/40"></div>
             <div className="w-2 h-2 rounded-full bg-green-500/20 border border-green-500/40"></div>
         </div>
+        {onClose && (
+          <button 
+            onClick={onClose}
+            className="p-1 rounded-md hover:bg-slate-800 text-slate-500 hover:text-white transition-colors"
+            title="ซ่อนแผงควบคุม"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       {/* Goal & AI Instructions (for PLAN reading) */}

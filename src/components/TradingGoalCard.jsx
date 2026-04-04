@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Target, Save, Check, Loader2 } from 'lucide-react';
+import { Target, Save, Check, Loader2, X } from 'lucide-react';
 
-export default function TradingGoalCard({ initialValue, onSave }) {
+export default function TradingGoalCard({ initialValue, onSave, onClose }) {
   const [goal, setGoal] = useState(initialValue || '');
   const [isSaving, setIsSaving] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -32,18 +32,30 @@ export default function TradingGoalCard({ initialValue, onSave }) {
             <Target className="text-teal-500" size={18} />
             <h3 className="text-sm font-bold text-white uppercase tracking-widest font-thai">เป้าหมาย & คำสั่ง AI</h3>
         </div>
-        <button
-          onClick={handleSave}
-          disabled={isSaving || goal === initialValue}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-            goal === initialValue 
-            ? 'opacity-50 cursor-not-allowed bg-slate-800 text-slate-500' 
-            : 'bg-teal-500 text-[#0b1121] hover:bg-teal-400'
-          }`}
-        >
-          {isSaving ? <Loader2 size={14} className="animate-spin" /> : (showSuccess ? <Check size={14} /> : <Save size={14} />)}
-          {showSuccess ? 'บันทึกแล้ว' : 'บันทึก'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleSave}
+            disabled={isSaving || goal === initialValue}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              goal === initialValue 
+              ? 'opacity-50 cursor-not-allowed bg-slate-800 text-slate-500' 
+              : 'bg-teal-500 text-[#0b1121] hover:bg-teal-400'
+            }`}
+          >
+            {isSaving ? <Loader2 size={14} className="animate-spin" /> : (showSuccess ? <Check size={14} /> : <Save size={14} />)}
+            {showSuccess ? 'บันทึกแล้ว' : 'บันทึก'}
+          </button>
+          
+          {onClose && (
+            <button 
+              onClick={onClose}
+              className="p-1.5 rounded-lg border border-slate-800 text-slate-500 hover:text-white hover:border-slate-700 transition-colors"
+              title="ซ่อน"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
       </div>
       
       <textarea

@@ -1,15 +1,14 @@
-import { PrismaClient } from '@prisma/client';
-// Diagnostic Touch
+import { prisma } from '@/lib/db';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { NextResponse } from 'next/server';
 import { getBitgetClient } from '@/services/bitget';
 import { initEngine } from '@/engine/engineManager';
 
-const prisma = new PrismaClient();
 let engineInitialized = false;
 
 export async function GET(_req) {
+  console.log('[Stats API] GET request received');
   if (!engineInitialized) {
     console.log('[DEBUG] initEngine() triggered from /api/dashboard/stats');
     initEngine().catch(err => {
@@ -64,6 +63,7 @@ export async function GET(_req) {
         const fetchBal = async (client, type) => {
           try {
             const bal = await client.fetchBalance({ type });
+            console.log(`[Stats API] fetched ${type} balance. Coins:`, Object.keys(bal.total || {}));
             for (const coin in bal.total || {}) {
               const total = parseFloat(bal.total[coin] || 0);
               if (total > 0) {
@@ -77,11 +77,15 @@ export async function GET(_req) {
                 if (type === 'swap') futureAssets.push(item);
               }
             }
-          } catch (e) {}
+          } catch (e) {
+            console.error(`[Stats API] fetchBalance error for ${type}:`, e.message);
+          }
         };
 
-        await fetchBal(futuresClient, 'swap');
-        await fetchBal(spotClient, 'spot');
+        await Promise.all([
+          fetchBal(futuresClient, 'swap'),
+          fetchBal(spotClient, 'spot')
+        ]);
 
         const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
         const stableSet = new Set(stablecoins);
@@ -91,36 +95,38 @@ export async function GET(_req) {
         futureAssets.forEach(a => { if(stableSet.has(a.coin)) futureValueUsdt += a.total; });
         
         walletAssetsValueUsdt = spotValueUsdt + futureValueUsdt;
+        console.log(`[Stats API] Initial Value (Stables): Spot=${spotValueUsdt}, Future=${futureValueUsdt}`);
         
         try {
           if (Object.keys(assetsMap).length > 0) {
             await futuresClient.loadMarkets();
             await spotClient.loadMarkets();
           }
-        } catch (e) {}
+        } catch (e) {
+          console.error('[Stats API] loadMarkets error:', e.message);
+        }
 
         // Positions valuation (Futures only) + count open positions
         let openPositionsCount = 0;
         let openOrdersCount = 0;
         let unrealizedPnlTotal = 0;
-        try {
-          const positions = await futuresClient.fetchPositions();
-          for (const pos of positions) {
-            if (parseFloat(pos.contracts) > 0) {
-              openPositionsCount += 1;
-              const upnl = parseFloat(pos.unrealizedPnl || 0);
-              unrealizedPnlTotal += upnl;
-            }
-          }
-        } catch (e) {}
 
-        try {
-          const spotOpenOrders = await spotClient.fetchOpenOrders().catch(() => []);
-          const futuresOpenOrders = await futuresClient.fetchOpenOrders().catch(() => []);
-          if (marketType === 'SPOT') openOrdersCount = (spotOpenOrders || []).length;
-          else if (marketType === 'FUTURES') openOrdersCount = (futuresOpenOrders || []).length;
-          else openOrdersCount = (spotOpenOrders || []).length + (futuresOpenOrders || []).length;
-        } catch (e) {}
+        const [positions, spotOpenOrders, futuresOpenOrders] = await Promise.all([
+          futuresClient.fetchPositions().catch(() => []),
+          spotClient.fetchOpenOrders().catch(() => []),
+          futuresClient.fetchOpenOrders().catch(() => [])
+        ]);
+
+        for (const pos of positions) {
+          if (parseFloat(pos.contracts) > 0) {
+            openPositionsCount += 1;
+            const upnl = parseFloat(pos.unrealizedPnl || 0);
+            unrealizedPnlTotal += upnl;
+          }
+        }
+        if (marketType === 'SPOT') openOrdersCount = (spotOpenOrders || []).length;
+        else if (marketType === 'FUTURES') openOrdersCount = (futuresOpenOrders || []).length;
+        else openOrdersCount = (spotOpenOrders || []).length + (futuresOpenOrders || []).length;
 
         const openCount =
           marketType === 'SPOT'
@@ -147,9 +153,14 @@ export async function GET(_req) {
           return currentPrice ? asset.total * currentPrice : 0;
         };
 
-        // Valuation update (async for each asset)
-        for (const a of spotAssets) { spotValueUsdt += await priceAsset(a); }
-        for (const a of futureAssets) { futureValueUsdt += await priceAsset(a); }
+        // Valuation update (Parallelize asset pricing)
+        const [spotResults, futureResults] = await Promise.all([
+          Promise.all(spotAssets.map(a => priceAsset(a))),
+          Promise.all(futureAssets.map(a => priceAsset(a)))
+        ]);
+        
+        spotValueUsdt += spotResults.reduce((sum, val) => sum + val, 0);
+        futureValueUsdt += futureResults.reduce((sum, val) => sum + val, 0);
         
         walletAssetsValueUsdt = spotValueUsdt + futureValueUsdt;
         assets = Object.values(assetsMap);
@@ -174,7 +185,7 @@ export async function GET(_req) {
           futureAssets
         });
       } catch (err) {
-        console.error(`[Dashboard] Bitget fetch failed:`, err.message);
+        console.error(`[Dashboard Stats] Bitget fetch failed:`, err.message);
       }
     }
 
@@ -190,8 +201,12 @@ export async function GET(_req) {
       portfolioHealth: 0,
       currentPnl: 0,
       walletAssetsValueUsdt: 0,
+      spotValueUsdt: 0,
+      futureValueUsdt: 0,
       aiDirectives: config.aiDirectives || "เน้นความปลอดภัยและกำไรที่สม่ำเสมอ",
-      assets: []
+      assets: [],
+      spotAssets: [],
+      futureAssets: []
     });
   } catch (error) {
     console.error('Dashboard Stats Error:', error);

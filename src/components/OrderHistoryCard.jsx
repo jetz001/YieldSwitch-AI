@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Clock, Activity, Terminal, AlertTriangle } from 'lucide-react';
+import { Clock, Activity, Terminal, AlertTriangle, X } from 'lucide-react';
+import CoinIcon from '@/components/CoinIcon';
+import CoinLink from '@/components/CoinLink';
 
 function normalizeEntryAction(side, symbol = '') {
   const s = (side || '').toUpperCase();
@@ -11,16 +13,28 @@ function normalizeEntryAction(side, symbol = '') {
   }
   if (s === 'BUY' || s === 'LONG') return 'BUY';
   if (s === 'SELL' || s === 'SHORT') return 'SELL';
-  return s.includes('BUY') ? 'BUY' : 'SELL';
+  return s; // Return the literal side for BORROW, REPAY, etc.
 }
 
-export default function OrderHistoryCard() {
+export default function OrderHistoryCard({ marketType = 'MIXED', onClose }) {
   const [statusFilter, setStatusFilter] = useState('CLOSED'); // CLOSED|CANCELLED|ALL
+  const [category, setCategory] = useState('ORDERS'); // ORDERS|FILLS|FINANCE
   const [rows, setRows] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [expandedRawIds, setExpandedRawIds] = useState([]);
 
-  const tabs = useMemo(
+  const isMargin = marketType === 'MARGIN';
+
+  const categoryTabs = useMemo(() => {
+    if (!isMargin) return [{ id: 'ORDERS', label: 'History' }];
+    return [
+      { id: 'ORDERS', label: 'Orders' },
+      { id: 'FILLS', label: 'Fills' },
+      { id: 'FINANCE', label: 'Finance' },
+    ];
+  }, [isMargin]);
+
+  const statusTabs = useMemo(
     () => [
       { id: 'CLOSED', label: 'Closed' },
       { id: 'CANCELLED', label: 'Cancelled' },
@@ -34,7 +48,13 @@ export default function OrderHistoryCard() {
 
     const fetchHistory = async () => {
       try {
-        const res = await fetch(`/api/dashboard/order-history?status=${encodeURIComponent(statusFilter)}&limit=60`);
+        const query = new URLSearchParams({
+          status: statusFilter,
+          limit: '60',
+          marketType,
+          category
+        });
+        const res = await fetch(`/api/dashboard/order-history?${query.toString()}`);
         if (!res.ok) {
           // Keep UI stable if API fails.
           console.warn('Order history fetch failed status:', res.status);
@@ -57,7 +77,7 @@ export default function OrderHistoryCard() {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [statusFilter]);
+  }, [statusFilter, category, marketType]);
 
   const endpoint = `/api/dashboard/order-history?status=${encodeURIComponent(statusFilter)}&limit=60`;
 
@@ -102,8 +122,10 @@ export default function OrderHistoryCard() {
     });
   };
 
+  const showStatusTabs = category === 'ORDERS';
+
   return (
-    <div className="bg-[#0b1121] border border-slate-800 rounded-2xl flex flex-col h-[420px] overflow-hidden shadow-2xl">
+    <div className="bg-[#0b1121] border border-slate-800 rounded-2xl flex flex-col h-[600px] overflow-hidden shadow-2xl">
       {/* Header */}
       <div className="p-4 border-b border-slate-800/50 flex justify-between items-center bg-[#0d1425]">
         <div className="flex items-center gap-3">
@@ -112,39 +134,71 @@ export default function OrderHistoryCard() {
             <h2 className="text-[10px] font-extrabold text-slate-300 uppercase tracking-[0.2em] font-mono">
               ORDER HISTORY TERMINAL
             </h2>
-            <div className="text-[11px] text-slate-400 font-thai mt-1">
-              endpoint: <span className="text-slate-300 font-mono">{endpoint}</span>
-            </div>
           </div>
         </div>
 
-        <div className="flex gap-2 items-center">
-          <Clock size={16} className="text-slate-400" />
-          <div className="w-2 h-2 rounded-full bg-teal-500/20 border border-slate-700/60" />
-          <span className="text-[10px] text-slate-500 font-bold font-mono">
-            {isLoading ? 'LOADING...' : `rows=${rows.length}`}
-          </span>
+        <div className="flex gap-4 items-center">
+          <div className="flex items-center gap-2">
+            <Clock size={16} className="text-slate-400" />
+            <div className="w-2 h-2 rounded-full bg-teal-500/20 border border-slate-700/60" />
+            <span className="text-[10px] text-slate-500 font-bold font-mono uppercase">
+              {isLoading ? 'LOADING...' : `rows=${rows.length}`}
+            </span>
+          </div>
+
+          {onClose && (
+            <button 
+              onClick={onClose}
+              className="p-1 rounded-md hover:bg-slate-800 text-slate-500 hover:text-white transition-colors border border-transparent hover:border-slate-700"
+              title="ซ่อนประวัติคำสั่ง"
+            >
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-slate-800/50 bg-[#0d1425]/50">
-        {tabs.map((t) => {
-          const active = statusFilter === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setStatusFilter(t.id)}
-              className={`flex-1 py-3 text-[10px] font-bold tracking-widest transition-all relative ${
-                active ? 'text-teal-400 bg-teal-500/5' : 'text-slate-500 hover:text-slate-300'
-              }`}
-            >
-              {t.label}
-              {active && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-teal-500" />}
-            </button>
-          );
-        })}
-      </div>
+      {/* Main Category Tabs (Only if Margin) */}
+      {isMargin && (
+        <div className="flex border-b border-slate-800/30 bg-[#0d1425]/50 overflow-x-auto whitespace-nowrap scrollbar-hide">
+          {categoryTabs.map((t) => {
+            const active = category === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setCategory(t.id)}
+                className={`flex-1 py-4 px-6 text-[11px] font-bold tracking-widest transition-all relative ${
+                  active ? 'text-teal-400 bg-teal-500/5' : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {t.label}
+                {active && <div className="absolute bottom-0 left-0 w-full h-1 bg-teal-500 shadow-[0_0_10px_rgba(20,184,166,0.5)]" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Status Tabs (Only if category is Orders) */}
+      {showStatusTabs && (
+        <div className="flex border-b border-slate-800/50 bg-[#0d1425]/30">
+          {statusTabs.map((t) => {
+            const active = statusFilter === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setStatusFilter(t.id)}
+                className={`flex-1 py-3 text-[10px] font-bold tracking-widest transition-all relative ${
+                  active ? 'text-teal-300 bg-teal-500/5' : 'text-slate-600 hover:text-slate-400'
+                }`}
+              >
+                {t.label}
+                {active && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-teal-400" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 font-mono scrollbar-hide bg-[#0b1121]">
@@ -183,9 +237,14 @@ export default function OrderHistoryCard() {
                   <div className="px-3 py-2 bg-[#0d1425] flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className={`w-2 h-2 rounded-full ${statusDotClass(r.status)}`} />
-                      <span className="text-[10px] text-slate-400 font-bold">
+                      <span className="text-[10px] text-slate-400 font-bold flex items-center gap-2">
                         [{r.status}] {openedAtLabel}
-                        <span className="text-slate-300 font-mono ml-2">{r.symbol}</span>
+                        <div className="flex items-center gap-1.5 bg-slate-800/40 px-1.5 py-0.5 rounded border border-slate-700/30">
+                          <CoinIcon symbol={r.symbol} size={14} />
+                          <CoinLink symbol={r.symbol} marketType={marketType}>
+                            <span className="text-slate-200 font-mono">{r.symbol}</span>
+                          </CoinLink>
+                        </div>
                       </span>
                     </div>
                     <div className="flex items-center gap-3">

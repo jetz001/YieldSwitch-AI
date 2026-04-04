@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../lib/db.js';
 import { logPhase } from '../aiBase.js';
-
-const prisma = new PrismaClient();
 
 /**
  * §3 Zero Balance Guard

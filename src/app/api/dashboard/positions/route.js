@@ -1,11 +1,9 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/db';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { NextResponse } from 'next/server';
 
 import { getBitgetClient } from '@/services/bitget';
-
-const prisma = new PrismaClient();
 
 export async function GET(req) {
   try {
@@ -47,8 +45,12 @@ export async function GET(req) {
 
     const rows = [];
 
+    const [positions, openOrders] = await Promise.all([
+      (marketType === 'FUTURES' || marketType === 'MIXED') ? futuresClient.fetchPositions().catch(() => []) : Promise.resolve([]),
+      (marketType === 'SPOT' || marketType === 'MIXED') ? spotClient.fetchOpenOrders().catch(() => []) : Promise.resolve([])
+    ]);
+
     if (marketType === 'FUTURES' || marketType === 'MIXED') {
-      const positions = await futuresClient.fetchPositions().catch(() => []);
       for (const p of positions) {
         const contracts = Number(p.contracts || 0);
         if (!Number.isFinite(contracts) || contracts <= 0) continue;
@@ -96,7 +98,6 @@ export async function GET(req) {
     }
 
     if (marketType === 'SPOT' || marketType === 'MIXED') {
-      const openOrders = await spotClient.fetchOpenOrders().catch(() => []);
       for (const o of openOrders) {
         const symbol = o.symbol;
         if (search && !normalizeSymbol(symbol).includes(search)) continue;

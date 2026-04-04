@@ -1,9 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/db.js';
 import { calculateMaxLeverage } from './mathGuard.js';
 import { calculateSLPrice, calculateTPTiers } from '../utils/priceMath.js';
 import { logPhase } from './aiBase.js';
-
-const prisma = new PrismaClient();
 
 /**
  * Map symbol to correct Bitget format
@@ -793,7 +791,7 @@ export async function closePositionBySymbol(client, botConfigId, symbol, side = 
       const buildCloseRequest = (hedged) => {
         if (hedged) {
           return {
-            side: posSide === 'LONG' ? 'buy' : 'sell',
+            side: posSide === 'LONG' ? 'sell' : 'buy',
             params: { reduceOnly: true, hedged: true, posSide: posSideLower, holdSide: posSideLower }
           };
         }
@@ -828,6 +826,18 @@ export async function closePositionBySymbol(client, botConfigId, symbol, side = 
       if (lastErr) throw lastErr;
     }
 
+    // Verify closure: poll a few times
+    let closedOk = false;
+    for (let i = 0; i < 5; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      const after = await client.fetchPositions().catch(() => []);
+      const stillOpen = (after || []).some(p => {
+        const c = Number(p.contracts || 0);
+        return c > 0 && candidateSymbols.has(String(p.symbol));
+      });
+      if (!stillOpen) { closedOk = true; break; }
+    }
+
     const ticker = await client.fetchTicker(mappedSymbol).catch(() => ({}));
     const exitPrice = Number(ticker.last || ticker.close || 0);
     const entryPrice = Number(matches[0]?.entryPrice || 0);
@@ -836,8 +846,13 @@ export async function closePositionBySymbol(client, botConfigId, symbol, side = 
     const adjustedPnl = posSide === 'SHORT' ? -pnlPercent : pnlPercent;
     const sideLabel = desiredSide || posSide;
 
-    await logPhase(botConfigId, 'TRIGGER', `🧠 AI Force Close: ปิดสถานะ ${mappedSymbol} (${sideLabel}) (เหตุผล: ${safeReason}) — PNL ${adjustedPnl.toFixed(2)}%`);
-    return true;
+    if (closedOk) {
+      await logPhase(botConfigId, 'TRIGGER', `🧠 AI Force Close: ปิดสถานะ ${mappedSymbol} (${sideLabel}) สำเร็จ (เหตุผล: ${safeReason}) — PNL ${adjustedPnl.toFixed(2)}%`);
+      return true;
+    } else {
+      await logPhase(botConfigId, 'TRIGGER', `⚠️ AI Force Close: สั่งปิด ${mappedSymbol} แล้วแต่ยังพบคงเหลือบนกระดาน (เหตุผล: ${safeReason})`);
+      return false;
+    }
   } catch (error) {
     console.error('[ExecGuard] Force close failed:', error.message);
     return false;

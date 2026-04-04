@@ -3,10 +3,9 @@ import { checkZeroBalance } from './guards/balanceGuard.js';
 import { executeStrategy, closePositionBySymbol } from './executionGuard.js';
 import { checkGlobalCircuitBreaker } from './mathGuard.js';
 import { getBitgetClient } from '../services/bitget.js';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/db.js';
 import { logPhase } from './aiBase.js';
 
-const prisma = new PrismaClient();
 const activeLoops = new Map();
 
 /**
@@ -168,7 +167,14 @@ export async function startEngine(botConfigId) {
                   closeSide = inferred === 'SHORT' ? 'SHORT' : inferred === 'LONG' ? 'LONG' : null;
                 }
 
-                let closed = await closePositionBySymbol(bitgetFutures, botConfigId, closeSymbol, closeSide, safeReason);
+                // Cleanup symbol if AI messes up the format, e.g., ADA/USDT:SHORT
+                let cleanCloseSymbol = closeSymbol.toUpperCase();
+                if (cleanCloseSymbol.endsWith(':SHORT')) cleanCloseSymbol = cleanCloseSymbol.replace(':SHORT', ':USDT');
+                if (cleanCloseSymbol.endsWith(':LONG')) cleanCloseSymbol = cleanCloseSymbol.replace(':LONG', ':USDT');
+                if (cleanCloseSymbol.endsWith(':SELL')) cleanCloseSymbol = cleanCloseSymbol.replace(':SELL', ':USDT');
+                if (cleanCloseSymbol.endsWith(':BUY')) cleanCloseSymbol = cleanCloseSymbol.replace(':BUY', ':USDT');
+
+                let closed = await closePositionBySymbol(bitgetFutures, botConfigId, cleanCloseSymbol, closeSide, safeReason);
                 if (!closed) {
                   closed = await closePositionBySymbol(bitgetSpot, botConfigId, closeSymbol, closeSide, safeReason);
                 }
@@ -202,13 +208,40 @@ export async function startEngine(botConfigId) {
 
 function getExchangeClient(config) {
   try {
-    if (config.isPaperTrading && config.User?.bitgetDemoApiKey) {
-      return getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true);
-    } else if (config.User?.bitgetApiKey) {
-      return getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false);
+    const user = config.User;
+    if (config.isPaperTrading && user?.bitgetDemoApiKey) {
+      return getBitgetClient(user.bitgetDemoApiKey, user.bitgetDemoApiSecret, user.bitgetDemoPassphrase, true);
+    } else if (user?.bitgetApiKey) {
+      return getBitgetClient(user.bitgetApiKey, user.bitgetApiSecret, user.bitgetPassphrase, false);
     }
     return null;
   } catch (e) { return null; }
+}
+
+export async function getExchangeClients(botConfigId) {
+  const config = await prisma.botConfig.findUnique({
+    where: { id: botConfigId },
+    include: { User: true }
+  });
+  if (!config) return { spot: null, futures: null };
+
+  const user = config.User;
+  let spot = null;
+  let futures = null;
+
+  if (config.isPaperTrading && user?.bitgetDemoApiKey) {
+    futures = getBitgetClient(user.bitgetDemoApiKey, user.bitgetDemoApiSecret, user.bitgetDemoPassphrase, true);
+    spot = futures; // Bitget Demo Unified
+  } else {
+    if (user?.bitgetApiKey) {
+      spot = getBitgetClient(user.bitgetApiKey, user.bitgetApiSecret, user.bitgetPassphrase, false);
+    }
+    // For live, we might need a separate futures client if they differ, 
+    // but usually getBitgetClient handles both if it's V2.
+    futures = spot; 
+  }
+  
+  return { spot, futures };
 }
 
 export async function initEngine() {
@@ -237,6 +270,7 @@ export function stopEngine(botConfigId) {
 
 async function pruneFlashData(botConfigId) {
   try {
+    // 1. Prune Logs (Keep latest 400)
     const keepLogIds = await prisma.aILogStream.findMany({
       where: { botConfigId },
       orderBy: { timestamp: 'desc' },
@@ -251,5 +285,28 @@ async function pruneFlashData(botConfigId) {
       }
     });
 
-  } catch (e) {}
+    // 2. Prune Trade History (Keep latest 1,000 CLOSED/CANCELLED tranches)
+    // We only prune closed/cancelled to avoid deleting active positions.
+    const keepHistoryIds = await prisma.activeTranche.findMany({
+      where: { 
+        botConfigId,
+        status: { in: ['CLOSED', 'CANCELLED'] }
+      },
+      orderBy: { openedAt: 'desc' },
+      take: 1000,
+      select: { id: true }
+    });
+    
+    const keepHistoryIdSet = new Set(keepHistoryIds.map(x => x.id));
+    await prisma.activeTranche.deleteMany({
+      where: {
+        botConfigId,
+        status: { in: ['CLOSED', 'CANCELLED'] },
+        ...(keepHistoryIdSet.size > 0 ? { id: { notIn: Array.from(keepHistoryIdSet) } } : {})
+      }
+    });
+
+  } catch (e) {
+    console.warn('[Engine] Pruning failed:', e.message);
+  }
 }

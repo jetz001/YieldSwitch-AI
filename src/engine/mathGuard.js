@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
-import { getSectorForSymbol } from './autoScreener';
-
-const prisma = new PrismaClient();
+import { prisma } from '../lib/db.js';
+import { getSectorForSymbol } from './autoScreener.js';
 
 /**
  * Math Guard — Master Prompt §3

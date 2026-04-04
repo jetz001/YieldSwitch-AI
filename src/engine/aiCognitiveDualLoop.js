@@ -1,8 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/db.js';
 import { runCognitiveSpotLoop } from './aiCognitiveSpotLoop.js';
 import { runCognitiveFutureLoop } from './aiCognitiveFutureLoop.js';
-
-const prisma = new PrismaClient();
 
 function extractMarketTypeFromDirectives(directives) {
   const text = String(directives || '');

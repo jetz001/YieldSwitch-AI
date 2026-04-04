@@ -1,11 +1,9 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/db.js';
 import { randomUUID } from 'crypto';
 import { getLLMClient } from '../services/llmProvider.js';
 import { getBitgetClient } from '../services/bitget.js';
 import { runAutoScreener, getFearAndGreedIndex, getBTCTrend, getSectorForSymbol } from './autoScreener.js';
 import { calculateSLPrice, calculateTPTiers } from '../utils/priceMath.js';
-
-const prisma = new PrismaClient();
 
 export async function getContext(botConfigId, marketType) {
   const config = await prisma.botConfig.findUnique({ 
@@ -61,28 +59,19 @@ export async function getContext(botConfigId, marketType) {
             ? Number((contracts * currentPrice).toFixed(2))
             : 0;
         return {
-          id: `${p.symbol}|${side}`,
           symbol: p.symbol,
           side,
-          entry,
-          mark: currentPrice,
-          contracts,
-          notionalUsdt,
-          upnl,
-          pnlPercent,
-          sl: null,
-          tp: null
+          entry: Number(entry.toFixed(5)),
+          notional: notionalUsdt,
+          pnl: pnlPercent
         };
       });
 
       const openOrdersRaw = await bitgetClient.fetchOpenOrders().catch(() => []);
       openOrdersForAI = (openOrdersRaw || []).slice(0, 6).map(o => ({
-        id: o.id,
         symbol: o.symbol,
-        side: o.side,
-        type: o.type,
-        price: o.price,
-        remaining: o.remaining
+        side: String(o.side).toUpperCase(),
+        price: o.price
       }));
     } else if (String(marketType || '').toUpperCase() === 'SPOT') {
       const openOrdersRaw = await bitgetClient.fetchOpenOrders().catch(() => []);
@@ -106,6 +95,7 @@ export async function getContext(botConfigId, marketType) {
   const candidatesForAI = candidates.slice(0, 2).map(c => ({
     symbol: c.originalSymbol || c.symbol,
     price: c.price,
+    min: c.limits?.amount?.min || 0,
     score: c.score,
     reason: c.reason?.substring(0, 40)
   }));
@@ -131,15 +121,75 @@ export async function callLLM(llmInfo, rules, contextPayload) {
 
   if (normAiProvider === 'GEMINI') {
     const isGemma = model.toLowerCase().includes('gemma');
-    const genConfig = { maxOutputTokens: 2000 };
-    if (!isGemma) genConfig.responseMimeType = "application/json";
+    
+    // ดึงรหัส Model จาก API Vault มาใช้ตรงๆโดยไม่บังคับ Lock แล้ว
+    const actualModel = model.replace('models/', '');
+    
+    console.log(`[callLLM] Calling Gemini API directly with model: ${actualModel}`);
+    
+    // Determine if we should use systemInstruction or merge into prompt
+    // Gemma 1B/27B and some older models do not support developer_instruction
+    const supportsSystemInstruction = !isGemma;
 
-    const response = await client.models.generateContent({
-      model: model,
-      contents: [{ role: 'user', parts: [{ text: `${rules}\n${JSON.stringify(contextPayload)}` }] }],
-      config: genConfig
-    });
-    return response.text;
+    try {
+      const configObj = { maxOutputTokens: 2000 };
+      let finalRules = rules;
+      
+      if (!isGemma) {
+        configObj.responseMimeType = "application/json";
+        configObj.systemInstruction = { parts: [{ text: finalRules }] };
+      } else {
+        // Gemma 1B/27B needs extra guidance since JSON mode is off
+        finalRules += "\n\nCRITICAL FORMATTING RULES:\n1. Output ONLY valid JSON.\n2. NO preamble or explanations.\n3. reasoning MUST BE PLAIN TEXT (forbidden chars: double-quotes/colons).\n4. IF 'active_positions' IS EMPTY, YOU MUST SET 'close_positions': []. DO NOT HALLUCINATE POSITIONS.\n5. IF 'open_orders' IS EMPTY, YOU MUST SET 'cancel_orders': [].\n6. TRADES must be > 5 USDT and satisfy 'min' amount in candidates.\n7. WARNING: DO NOT ECHO INPUT DATA.";
+      }
+      
+      const userPrompt = isGemma 
+        ? `TASK: Analyze market data and return NEXT ACTIONS in JSON format.\nRULES:\n${finalRules}\n\nDATA TO ANALYZE:\n${JSON.stringify(contextPayload)}`
+        : `Analyze the following trading environment state and formulate your next actions:\n\n${JSON.stringify(contextPayload)}`;
+
+      const response = await client.models.generateContent({
+        model: actualModel,
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        config: configObj
+      });
+      
+      console.log(`[callLLM] Response length: ${response.text?.length || 0}`);
+      
+      return response.text;
+    } catch (error) {
+      console.error(`[callLLM] Error calling Gemini:`, error.message);
+      
+      // If we hit the developer instruction error, retry once by merging into prompt
+      if (error.message.includes('Developer instruction') || error.message.includes('INVALID_ARGUMENT')) {
+        console.log(`[callLLM] Retrying without systemInstruction for ${actualModel}`);
+        try {
+          const retryResponse = await client.models.generateContent({
+            model: actualModel,
+            contents: [{ role: 'user', parts: [{ text: `${rules}\n\nAnalyze this data:\n${JSON.stringify(contextPayload)}` }] }],
+            config: { maxOutputTokens: 2000 }
+          });
+          return retryResponse.text;
+        } catch (retryErr) {
+          console.error(`[callLLM] Retry failed:`, retryErr.message);
+        }
+      }
+
+      if (isGemma || error.message.includes('429') || error.message.includes('Quota')) {
+        console.log(`[callLLM] Global Fallback: trying gemini-2.0-flash-lite`);
+        try {
+          const fallbackResponse = await client.models.generateContent({
+            model: 'gemini-2.0-flash-lite',
+            contents: [{ role: 'user', parts: [{ text: `Analyze the following trading environment state:\n\n${JSON.stringify(contextPayload)}` }] }],
+            config: { maxOutputTokens: 2000, responseMimeType: "application/json", systemInstruction: rules }
+          });
+          return fallbackResponse.text;
+        } catch (fallbackError) {
+          console.error(`[callLLM] Global Fallback also failed:`, fallbackError.message);
+          throw error;
+        }
+      }
+      throw error;
+    }
   } else {
     const completionOptions = {
       model: model,
@@ -154,7 +204,42 @@ export async function callLLM(llmInfo, rules, contextPayload) {
 
 export function cleanJson(str) {
   if (!str) return "{}";
-  return str.replace(/```json/g, '').replace(/```/g, '').trim();
+  
+  // Preliminary cleanup
+  let s = String(str)
+    .replace(/```json/gi, '')
+    .replace(/```/g, '')
+    .trim();
+  
+  // Extract main object
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start !== -1 && end !== -1 && end > start) {
+    s = s.slice(start, end + 1);
+  }
+  
+  // Ensure keys are quoted
+  s = s.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*(?=("|{|\[|-?\d|t|f|null))/g, '$1"$2": ');
+  s = s.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":');
+
+  // Fix nested quotes in string values (specifically for Gemma models)
+  // Finds ': "value" ' where punctuation follows the closing quote
+  s = s.replace(/:\s*"([\s\S]*?)"(?=\s*[,}\]])/g, (match, content) => {
+    return `: "${content.replace(/"/g, "'")}"`;
+  });
+
+  // Final comma/whitespace cleanup
+  s = s.replace(/,\s*([}\]])/g, '$1');
+  s = s.replace(/\s*([{}\[\]])\s*/g, '$1');
+
+  // Second pass for safety - re-extract JSON slice if corrupted
+  const finalStart = s.indexOf('{');
+  const finalEnd = s.lastIndexOf('}');
+  if (finalStart !== -1 && finalEnd !== -1 && finalEnd > finalStart) {
+    s = s.slice(finalStart, finalEnd + 1);
+  }
+
+  return s;
 }
 
 export async function logPhase(botConfigId, step, content) {

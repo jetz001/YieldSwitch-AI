@@ -1,16 +1,18 @@
 "use client";
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useState } from 'react';
 import { LayoutDashboard, Key, Shield, Settings, LogOut, HelpCircle } from 'lucide-react';
+import HelpModal from './HelpModal';
 
 export default function SidebarLayout({ children }) {
   const pathname = usePathname();
+  const [showHelp, setShowHelp] = useState(false);
 
   const navItems = [
     { name: 'แดชบอร์ด', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'คลัง API', href: '/api-vault', icon: Key },
     { name: 'จัดการระบบแอดมิน', href: '/admin', icon: Shield },
-    { name: 'ตั้งค่า', href: '/settings', icon: Settings },
+    { name: 'ตั้งค่า', href: '/dashboard/settings', icon: Settings },
   ];
 
   return (
@@ -38,9 +40,12 @@ export default function SidebarLayout({ children }) {
 
         <div className="p-4 space-y-4 mb-4">
           <div className="space-y-2 pt-4 border-t border-slate-800">
-            <Link href="/support" className="flex items-center gap-3 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors">
+            <button 
+              onClick={() => setShowHelp(true)}
+              className="flex items-center gap-3 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors w-full text-left"
+            >
               <HelpCircle size={18} /> ช่วยเหลือ
-            </Link>
+            </button>
             <button className="flex items-center gap-3 px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors w-full text-left">
               <LogOut size={18} /> ออกจากระบบ
             </button>
@@ -70,6 +75,8 @@ export default function SidebarLayout({ children }) {
         <main className="flex-1 p-8 overflow-y-auto">
           {children}
         </main>
+        {/* Help Modal */}
+        <HelpModal isOpen={showHelp} onClose={() => setShowHelp(false)} />
       </div>
     </div>
   );

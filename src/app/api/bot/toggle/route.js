@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { startEngine, stopEngine } from '@/engine/engineManager';
 import { getBitgetClient } from '@/services/bitget';
 import { getLLMClient } from '@/services/llmProvider';
+import { sanitizeInput, validateNumeric } from '@/utils/security';
 
 export async function POST(req) {
   try {
@@ -70,9 +71,9 @@ export async function POST(req) {
       data: {
         isActive: isActive !== undefined ? isActive : undefined,
         isPaperTrading: isPaperTrading !== undefined ? isPaperTrading : undefined,
-        aiDirectives: aiDirectives !== undefined ? aiDirectives : undefined,
-        targetProfitUsdt: targetProfitUsdt !== undefined ? parseFloat(targetProfitUsdt) : undefined,
-        allocatedPortfolioUsdt: allocatedPortfolioUsdt !== undefined ? parseFloat(allocatedPortfolioUsdt) : undefined
+        aiDirectives: aiDirectives !== undefined ? sanitizeInput(aiDirectives, 1000) : undefined,
+        targetProfitUsdt: targetProfitUsdt !== undefined ? validateNumeric(targetProfitUsdt) : undefined,
+        allocatedPortfolioUsdt: allocatedPortfolioUsdt !== undefined ? validateNumeric(allocatedPortfolioUsdt) : undefined
       }
     });
 

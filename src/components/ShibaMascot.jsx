@@ -5,191 +5,132 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, PerspectiveCamera, Environment, ContactShadows, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 
-// --- Smooth 3D Shiba Model using High-Poly Primitives ---
-function SmoothShiba({ state = 'idle', onPet }) {
+// --- The Original Procedural 3D ShibaRobot ---
+function ShibaRobot({ state = 'idle', onPet }) {
   const group = useRef();
   const head = useRef();
   const tail = useRef();
+  const leftEar = useRef();
+  const rightEar = useRef();
   const mouth = useRef();
   
-  // Animation loop for natural movement
+  // Animation loop for ShibaRobot movements
   useFrame((stateObj, delta) => {
     const t = stateObj.clock.getElapsedTime();
     
-    // Smooth idle breathing & swaying
+    // Natural Idle swaying
     if (group.current) {
       group.current.position.y = Math.sin(t * 1.5) * 0.05;
       group.current.rotation.y = Math.sin(t * 0.5) * 0.05;
     }
     
-    // Head movement
+    // Head logic
     if (head.current) {
       if (state === 'nuzzling') {
+        // "Licking" or nuzzling rotation
         head.current.rotation.x = THREE.MathUtils.lerp(head.current.rotation.x, 0.4 + Math.sin(t * 4) * 0.1, 0.1);
-        head.current.rotation.z = THREE.MathUtils.lerp(head.current.rotation.z, Math.sin(t * 3) * 0.15, 0.1);
+        head.current.rotation.z = Math.sin(t * 3) * 0.1;
       } else {
-        head.current.rotation.x = THREE.MathUtils.lerp(head.current.rotation.x, Math.sin(t * 0.8) * 0.05, 0.1);
-        head.current.rotation.y = THREE.MathUtils.lerp(head.current.rotation.y, Math.sin(t * 1.2) * 0.1, 0.1);
-        head.current.rotation.z = THREE.MathUtils.lerp(head.current.rotation.z, 0, 0.1);
+        head.current.rotation.x = Math.sin(t * 1) * 0.1;
+        head.current.rotation.y = Math.sin(t * 0.8) * 0.1;
       }
     }
     
-    // Tail Wagging (Super happy when trading or nuzzling)
+    // Tail Wagging (Speed up when happy/activity)
     if (tail.current) {
-      const wagSpeed = (state === 'buying' || state === 'selling' || state === 'nuzzling') ? 20 : 3;
-      tail.current.rotation.y = Math.sin(t * wagSpeed) * 0.35;
+      const wagSpeed = (state === 'buying' || state === 'selling' || state === 'nuzzling') ? 15 : 2;
+      tail.current.rotation.z = Math.sin(t * wagSpeed) * 0.3;
     }
     
-    // Mouth open if carrying something
+    // Mouth open for trade assets
     if (mouth.current) {
-      mouth.current.position.y = (state === 'buying' || state === 'selling') ? -0.22 : -0.15;
+      mouth.current.position.y = (state === 'buying' || state === 'selling') ? -0.2 : -0.15;
     }
   });
 
   return (
     <group ref={group} dispose={null} onClick={onPet} cursor="pointer">
-      {/* --- BODY --- */}
-      <mesh position={[0, 0, 0]} castShadow>
-        <sphereGeometry args={[0.5, 32, 32]} />
-        <meshStandardMaterial color="#f0932b" roughness={0.7} />
+      {/* BODY */}
+      <mesh castShadow>
+        <boxGeometry args={[0.7, 0.6, 0.9]} />
+        <meshStandardMaterial color="#f0932b" roughness={0.1} metalness={0.8} />
       </mesh>
-      {/* Butt part of body to elongate */}
-      <mesh position={[0, -0.05, -0.4]} castShadow>
-        <sphereGeometry args={[0.48, 32, 32]} />
-        <meshStandardMaterial color="#f0932b" roughness={0.7} />
-      </mesh>
-      {/* Underbelly (White) */}
-      <mesh position={[0, -0.18, -0.1]} scale={[0.8, 0.5, 1.2]}>
-        <sphereGeometry args={[0.48, 24, 24]} />
-        <meshStandardMaterial color="#ffffff" roughness={0.8} />
-      </mesh>
-
-      {/* --- HEAD --- */}
-      <group ref={head} position={[0, 0.45, 0.45]}>
-        {/* Main Head Sphere */}
+      
+      {/* HEAD */}
+      <group ref={head} position={[0, 0.5, 0.5]}>
         <mesh castShadow>
-          <sphereGeometry args={[0.45, 32, 32]} />
-          <meshStandardMaterial color="#f0932b" roughness={0.7} />
+          <boxGeometry args={[0.5, 0.5, 0.5]} />
+          <meshStandardMaterial color="#f0932b" roughness={0.1} metalness={0.8} />
         </mesh>
         
-        {/* Cheeks (Rounded Shiba cheeks) */}
-        <mesh position={[0.25, -0.1, 0.1]} scale={[1, 0.85, 1]}>
-          <sphereGeometry args={[0.22, 16, 16]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.8} />
-        </mesh>
-        <mesh position={[-0.25, -0.1, 0.1]} scale={[1, 0.85, 1]}>
-          <sphereGeometry args={[0.22, 16, 16]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.8} />
-        </mesh>
-
-        {/* Snout Area (White) */}
-        <mesh position={[0, -0.15, 0.3]} scale={[1, 0.7, 1]}>
-          <sphereGeometry args={[0.25, 16, 16]} />
-          <meshStandardMaterial color="#ffffff" roughness={0.8} />
+        {/* Snout */}
+        <mesh position={[0, -0.1, 0.35]}>
+          <boxGeometry args={[0.2, 0.2, 0.2]} />
+          <meshStandardMaterial color="#ffffff" roughness={0.1} />
         </mesh>
         
-        {/* Actual Nose Hub */}
-        <mesh position={[0, -0.05, 0.45]}>
-           <sphereGeometry args={[0.08, 12, 12]} />
-           <meshStandardMaterial color="#2d3436" />
-        </mesh>
-
-        {/* Eyes (Shiny Dark Bubbles) */}
-        <mesh position={[0.18, 0.1, 0.35]}>
-          <sphereGeometry args={[0.06, 16, 16]} />
-          <meshStandardMaterial color="#2d3436" metalness={0.8} roughness={0.1} />
-        </mesh>
-        <mesh position={[-0.18, 0.1, 0.35]}>
-          <sphereGeometry args={[0.06, 16, 16]} />
-          <meshStandardMaterial color="#2d3436" metalness={0.8} roughness={0.1} />
-        </mesh>
-        
-        {/* Eyebrow dots (Light cream) */}
-        <mesh position={[0.15, 0.25, 0.38]}>
-          <sphereGeometry args={[0.04, 8, 8]} />
-          <meshStandardMaterial color="#f9ca24" opacity={0.6} transparent />
-        </mesh>
-        <mesh position={[-0.15, 0.25, 0.38]}>
-          <sphereGeometry args={[0.04, 8, 8]} />
-          <meshStandardMaterial color="#f9ca24" opacity={0.6} transparent />
-        </mesh>
-
         {/* Ears */}
-        <group position={[0.3, 0.35, 0]} rotation={[0, 0, -0.2]}>
-           <mesh castShadow>
-             <coneGeometry args={[0.15, 0.35, 16]} />
-             <meshStandardMaterial color="#f0932b" />
-           </mesh>
-           <mesh position={[0, -0.05, 0.05]} scale={[0.6, 0.6, 0.5]}>
-             <coneGeometry args={[0.15, 0.3, 16]} />
-             <meshStandardMaterial color="#ffffff" />
-           </mesh>
-        </group>
-        <group position={[-0.3, 0.35, 0]} rotation={[0, 0, 0.2]}>
-           <mesh castShadow>
-             <coneGeometry args={[0.15, 0.35, 16]} />
-             <meshStandardMaterial color="#f0932b" />
-           </mesh>
-           <mesh position={[0, -0.05, 0.05]} scale={[0.6, 0.6, 0.5]}>
-             <coneGeometry args={[0.15, 0.3, 16]} />
-             <meshStandardMaterial color="#ffffff" />
-           </mesh>
-        </group>
-
-        {/* Lower Jaw (Mouth Area) */}
-        <mesh ref={mouth} position={[0, -0.15, 0.35]} scale={[0.8, 0.5, 0.8]}>
-            <sphereGeometry args={[0.15, 16, 16]} />
-            <meshStandardMaterial color="#ffffff" />
+        <mesh ref={leftEar} position={[0.2, 0.35, 0]}>
+          <coneGeometry args={[0.1, 0.2, 4]} />
+          <meshStandardMaterial color="#f0932b" />
+        </mesh>
+        <mesh ref={rightEar} position={[-0.2, 0.35, 0]}>
+          <coneGeometry args={[0.1, 0.2, 4]} />
+          <meshStandardMaterial color="#f0932b" />
+        </mesh>
+        
+        {/* Eyes (Digital glowing eyes) */}
+        <mesh position={[0.15, 0.1, 0.26]}>
+          <sphereGeometry args={[0.04, 16, 16]} />
+          <meshStandardMaterial color="#2d3436" emissive="#00d2d3" emissiveIntensity={2} />
+        </mesh>
+        <mesh position={[-0.15, 0.1, 0.26]}>
+          <sphereGeometry args={[0.04, 16, 16]} />
+          <meshStandardMaterial color="#2d3436" emissive="#00d2d3" emissiveIntensity={2} />
         </mesh>
 
-        {/* Trade Assets */}
+        {/* Mouth/Jaw */}
+        <mesh ref={mouth} position={[0, -0.15, 0.3]}>
+          <boxGeometry args={[0.2, 0.05, 0.15]} />
+          <meshStandardMaterial color="#ffffff" />
+        </mesh>
+
+        {/* Trade Assets in Mouth */}
         {state === 'buying' && (
-          <group position={[0, -0.25, 0.55]}>
-            <mesh castShadow>
-              <sphereGeometry args={[0.18, 16, 16]} />
-              <meshStandardMaterial color="#27ae60" emissive="#16a085" emissiveIntensity={0.5} />
-            </mesh>
-            <mesh position={[0, 0.15, 0]}>
-              <boxGeometry args={[0.04, 0.1, 0.04]} />
-              <meshStandardMaterial color="#ffffff" />
-            </mesh>
+          <group position={[0, -0.25, 0.4]}>
+             <mesh castShadow>
+               <boxGeometry args={[0.2, 0.25, 0.2]} />
+               <meshStandardMaterial color="#2ecc71" emissive="#2ecc71" emissiveIntensity={1} />
+             </mesh>
+             <mesh position={[0, 0.15, 0]}>
+                <sphereGeometry args={[0.05]} />
+                <meshStandardMaterial color="#ffffff" />
+             </mesh>
           </group>
         )}
         {state === 'selling' && (
-          <group position={[0, -0.25, 0.55]} rotation={[Math.PI / 2, 0, 0]}>
-             <mesh castShadow>
-              <cylinderGeometry args={[0.2, 0.2, 0.04, 24]} />
-              <meshStandardMaterial color="#f1c40f" metalness={0.9} roughness={0.1} />
-            </mesh>
-          </group>
+           <group position={[0, -0.25, 0.4]} rotation={[0, 0, Math.PI / 2]}>
+              <mesh castShadow>
+                <cylinderGeometry args={[0.15, 0.15, 0.04, 24]} />
+                <meshStandardMaterial color="#f1c40f" metalness={0.9} roughness={0.1} />
+              </mesh>
+           </group>
         )}
       </group>
 
-      {/* --- LEGS --- */}
-      {[[-0.28,-0.4, 0.3], [0.28,-0.4, 0.3], [-0.28,-0.4, -0.5], [0.28,-0.4, -0.5]].map((pos, i) => (
-        <group key={i} position={pos}>
-           <mesh castShadow>
-              <capsuleGeometry args={[0.12, 0.4, 8, 16]} />
-              <meshStandardMaterial color="#f0932b" />
-           </mesh>
-           <mesh position={[0, -0.25, 0]}>
-              <sphereGeometry args={[0.14, 16, 16]} />
-              <meshStandardMaterial color="#ffffff" />
-           </mesh>
-        </group>
+      {/* LEGS */}
+      {[[-0.3,-0.4, 0.3], [0.3,-0.4, 0.3], [-0.3,-0.4, -0.3], [0.3,-0.4, -0.3]].map((pos, i) => (
+        <mesh key={i} position={pos} castShadow>
+          <boxGeometry args={[0.15, 0.3, 0.15]} />
+          <meshStandardMaterial color="#2d3436" metalness={0.9} />
+        </mesh>
       ))}
 
-      {/* --- TAIL (Curled Shiba Tail) --- */}
-      <group ref={tail} position={[0, 0.3, -0.7]} rotation={[0.4, 0, 0]}>
-        <mesh castShadow position={[0, 0.1, 0]}>
-          <sphereGeometry args={[0.22, 16, 16]} />
-          <meshStandardMaterial color="#f0932b" />
-        </mesh>
-        <mesh position={[0, 0.2, 0.12]} scale={[0.7, 0.7, 0.7]}>
-          <sphereGeometry args={[0.2, 16, 16]} />
-          <meshStandardMaterial color="#ffffff" />
-        </mesh>
-      </group>
+      {/* TAIL (Cyber curl) */}
+      <mesh ref={tail} position={[0, 0.2, -0.5]}>
+        <torusGeometry args={[0.15, 0.05, 16, 32]} />
+        <meshStandardMaterial color="#f0932b" metalness={0.7} />
+      </mesh>
     </group>
   );
 }
@@ -198,6 +139,7 @@ export default function ShibaMascotContainer({ tradeEvent = null, isVisible = tr
   const [shibaState, setShibaState] = useState('idle');
   const [lastActivity, setLastActivity] = useState(Date.now());
 
+  // Handle detection of trades
   useEffect(() => {
     if (tradeEvent === 'BUY') {
       setShibaState('buying');
@@ -212,11 +154,11 @@ export default function ShibaMascotContainer({ tradeEvent = null, isVisible = tr
     }
   }, [tradeEvent]);
 
-  // Idle Nuzzling Logic
+  // Idle Licking/Nuzzling Logic (15s inactivity)
   useEffect(() => {
     const interval = setInterval(() => {
-      const inactiveTime = Date.now() - lastActivity;
-      if (inactiveTime > 20000 && shibaState === 'idle') {
+      const inactive = Date.now() - lastActivity;
+      if (inactive > 15000 && shibaState === 'idle') {
         setShibaState('nuzzling');
         setTimeout(() => setShibaState('idle'), 6000);
       }
@@ -227,33 +169,32 @@ export default function ShibaMascotContainer({ tradeEvent = null, isVisible = tr
   if (!isVisible) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 w-64 h-64 z-[9999] pointer-events-none">
-      <div className="w-full h-full pointer-events-auto cursor-pointer group" onClick={() => setLastActivity(Date.now())}>
+    <div className="fixed bottom-4 right-4 w-64 h-64 z-[10000] pointer-events-none group">
+      <div className="w-full h-full pointer-events-auto cursor-pointer relative" onClick={() => setLastActivity(Date.now())}>
         
-        {/* Status Bubble */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-full opacity-0 group-hover:opacity-100 transition-opacity bg-teal-900/90 text-teal-300 text-[10px] px-3 py-1.5 rounded-2xl whitespace-nowrap mb-4 border border-teal-500/30 font-bold tracking-tight shadow-xl">
-           Shiba AI • {shibaState === 'idle' ? 'Scanning...' : shibaState.toUpperCase()}
+        {/* Status Bubble (Modern Cyber Style) */}
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-4 opacity-0 group-hover:opacity-100 transition-all bg-indigo-900/90 text-indigo-300 text-[10px] px-3 py-1.5 rounded-2xl border border-indigo-500/30 font-bold tracking-tight shadow-xl">
+           ShibaBot AI • {shibaState === 'idle' ? 'Scanning...' : 'Active'}
         </div>
         
         <Canvas shadows gl={{ antialias: true, alpha: true }}>
-          <PerspectiveCamera makeDefault position={[0, 2, 5]} fov={40} />
+          <PerspectiveCamera makeDefault position={[0, 1.5, 4]} fov={35} />
           <ambientLight intensity={0.6} />
-          <spotLight position={[5, 10, 5]} angle={0.3} penumbra={1} intensity={2.5} castShadow />
-          <pointLight position={[-10, 0, 5]} intensity={0.8} color="#f9ca24" />
-          <pointLight position={[10, 0, -5]} intensity={0.5} color="#ecf0f1" />
+          <spotLight position={[10, 10, 10]} angle={0.15} penumbra={1} intensity={3} castShadow />
+          <pointLight position={[-10, -10, -10]} color="indigo" intensity={1} />
           
-          <Float speed={2.5} rotationIntensity={0.2} floatIntensity={0.6}>
-            <SmoothShiba state={shibaState} onPet={() => setLastActivity(Date.now())} />
+          <Float speed={2} rotationIntensity={0.2} floatIntensity={0.5}>
+            <ShibaRobot state={shibaState} onPet={() => setLastActivity(Date.now())} />
           </Float>
           
-          <ContactShadows position={[0, -0.65, 0]} opacity={0.4} scale={6} blur={3} far={1} />
+          <ContactShadows position={[0, -0.6, 0]} opacity={0.4} scale={5} blur={2} far={1} />
           <Environment preset="city" />
           
           <OrbitControls 
             enableZoom={false} 
             enablePan={false} 
             minPolarAngle={Math.PI / 4} 
-            maxPolarAngle={Math.PI / 2} 
+            maxPolarAngle={Math.PI / 1.8} 
           />
         </Canvas>
       </div>

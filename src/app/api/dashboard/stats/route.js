@@ -2,8 +2,7 @@ import { prisma } from '@/lib/db';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { NextResponse } from 'next/server';
-import { getBitgetClient } from '@/services/bitget';
-import { initEngine } from '@/engine/engineManager';
+import { initEngine, getExchangeClients } from '@/engine/engineManager';
 
 let engineInitialized = false;
 
@@ -39,18 +38,17 @@ export async function GET(_req) {
     };
     const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
     
-    const isDemo = config.isPaperTrading && !!config.User.bitgetDemoApiKey;
-    const isLive = !config.isPaperTrading && !!config.User.bitgetApiKey;
+    const isDemo = config.isPaperTrading && (config.User.bitgetDemoApiKey || config.User.binanceDemoApiKey);
+    const isLive = !config.isPaperTrading && (config.User.bitgetApiKey || config.User.binanceApiKey);
     let connectionStatus = (isLive || isDemo) ? 'CONNECTED' : 'NOT_CONFIGURED';
     let assets = [];
 
     if (isLive || isDemo) {
       try {
-        const apiKey = isDemo ? config.User.bitgetDemoApiKey : config.User.bitgetApiKey;
-        const apiSecret = isDemo ? config.User.bitgetDemoApiSecret : config.User.bitgetApiSecret;
-        const apiPass = isDemo ? config.User.bitgetDemoPassphrase : config.User.bitgetPassphrase;
-        const spotClient = getBitgetClient(apiKey, apiSecret, apiPass, isDemo, 'SPOT');
-        const futuresClient = getBitgetClient(apiKey, apiSecret, apiPass, isDemo, 'FUTURES');
+        const { spot, futures } = await getExchangeClients(config.id);
+        if (!spot || !futures) throw new Error('Failed to initialize exchange clients');
+        const spotClient = spot;
+        const futuresClient = futures;
 
         let walletAssetsValueUsdt = 0;
         let assetsMap = {};
@@ -63,7 +61,22 @@ export async function GET(_req) {
         const fetchBal = async (client, type) => {
           try {
             const bal = await client.fetchBalance({ type });
-            console.log(`[Stats API] fetched ${type} balance. Coins:`, Object.keys(bal.total || {}));
+            const tickers = await client.fetchTickers().catch(() => ({}));
+            const totalKeys = Object.keys(bal.total || {});
+            
+            // Filter by USD Value (> $1) to match UI and prevent dust confusion
+            const significantCoins = totalKeys.filter(coin => {
+              const amount = parseFloat(bal.total[coin] || 0);
+              if (amount <= 0) return false;
+              if (stableSet.has(coin)) return amount >= 1;
+              
+              const ticker = tickers[`${coin}/USDT`] || tickers[`${coin}:USDT`];
+              const valueUsdt = ticker?.last ? amount * ticker.last : 0;
+              return valueUsdt >= 1;
+            });
+
+            console.log(`[Stats API] fetched ${type} balance. Significant Coins (> $1):`, significantCoins);
+            
             for (const coin in bal.total || {}) {
               const total = parseFloat(bal.total[coin] || 0);
               if (total > 0) {
@@ -82,13 +95,13 @@ export async function GET(_req) {
           }
         };
 
+        const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
+        const stableSet = new Set(stablecoins);
+
         await Promise.all([
           fetchBal(futuresClient, 'swap'),
           fetchBal(spotClient, 'spot')
         ]);
-
-        const stablecoins = ['USDT', 'USD', 'SUSDT', 'USDC', 'BUSD'];
-        const stableSet = new Set(stablecoins);
         
         // Initial valuation with stables
         spotAssets.forEach(a => { if(stableSet.has(a.coin)) spotValueUsdt += a.total; });

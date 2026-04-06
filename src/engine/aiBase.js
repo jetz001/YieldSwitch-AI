@@ -1,7 +1,8 @@
 import { prisma } from '../lib/db.js';
 import { randomUUID } from 'crypto';
 import { getLLMClient } from '../services/llmProvider.js';
-import { getBitgetClient } from '../services/bitget.js';
+import { getBitgetClient, getExchangeClient } from '../services/exchangeFactory.js';
+import { getExchangeClients } from './engineManager.js';
 import { runAutoScreener, getFearAndGreedIndex, getBTCTrend, getSectorForSymbol } from './autoScreener.js';
 import { calculateSLPrice, calculateTPTiers } from '../utils/priceMath.js';
 
@@ -13,12 +14,9 @@ export async function getContext(botConfigId, marketType) {
   
   if (!config || !config.isActive) return null;
 
-  let bitgetClient;
-  if (config.isPaperTrading && config.User.bitgetDemoApiKey) {
-    bitgetClient = getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, marketType);
-  } else {
-    bitgetClient = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, marketType);
-  }
+  const { spot, futures } = await getExchangeClients(botConfigId);
+  const bitgetClient = marketType === 'SPOT' ? spot : futures;
+  if (!bitgetClient) return null;
 
   const candidates = await runAutoScreener(bitgetClient);
   const fearGreed = await getFearAndGreedIndex();
@@ -153,6 +151,8 @@ export async function getContext(botConfigId, marketType) {
     reason: c.reason?.substring(0, 40)
   }));
 
+  console.log(`[getContext] ${botConfigId} positions sent to AI: ${activePositionsForAI.length} (${activePositionsForAI.map(p => p.symbol).join(', ') || 'NONE'})`);
+
   return {
     config,
     marketType,
@@ -193,7 +193,7 @@ export async function callLLM(llmInfo, rules, contextPayload) {
         configObj.systemInstruction = { parts: [{ text: finalRules }] };
       } else {
         // Gemma 1B/27B needs extra guidance since JSON mode is off
-        finalRules += "\n\nCRITICAL FORMATTING RULES:\n1. Output ONLY valid JSON.\n2. NO preamble or explanations.\n3. reasoning MUST BE PLAIN TEXT (forbidden chars: double-quotes/colons).\n4. IF 'active_positions' IS EMPTY, YOU MUST SET 'close_positions': []. DO NOT HALLUCINATE POSITIONS.\n5. IF 'open_orders' IS EMPTY, YOU MUST SET 'cancel_orders': [].\n6. TRADES must be > 5 USDT and satisfy 'min' amount in candidates.\n7. WARNING: DO NOT ECHO INPUT DATA.";
+        finalRules += "\n\nCRITICAL FORMATTING RULES:\n1. Output ONLY valid JSON.\n2. NO preamble or explanations.\n3. reasoning MUST BE PLAIN TEXT (forbidden chars: double-quotes/colons).\n4. STRICT RULE: ONLY close positions listed in 'active_positions'. DO NOT close or sell coins you do not own.\n5. IF 'active_positions' IS EMPTY, YOU MUST SET 'close_positions': [].\n6. IF 'open_orders' IS EMPTY, YOU MUST SET 'cancel_orders': [].\n7. TRADES must be > 5 USDT and satisfy 'min' amount in candidates.\n8. WARNING: DO NOT ECHO INPUT DATA.";
       }
       
       const userPrompt = isGemma 
@@ -271,8 +271,8 @@ export function cleanJson(str) {
     s = s.slice(start, end + 1);
   }
   
-  // Ensure keys are quoted
-  s = s.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*(?=("|{|\[|-?\d|t|f|null))/g, '$1"$2": ');
+  // Ensure keys are quoted (Fixes unintentional splits of words like 'with' and 'but')
+  s = s.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*(?=("|{|\[|-?\d|true|false|null))/gi, '$1"$2": ');
   s = s.replace(/([{,]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":');
 
   // Fix nested quotes in string values (specifically for Gemma models)

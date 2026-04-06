@@ -28,6 +28,11 @@ export default function SettingsPage() {
     bitgetDemoApiKey: '',
     bitgetDemoApiSecret: '',
     bitgetDemoPassphrase: '',
+    binanceApiKey: '',
+    binanceApiSecret: '',
+    binanceDemoApiKey: '',
+    binanceDemoApiSecret: '',
+    activeExchange: 'bitget',
     aiApiKey: '',
     aiProvider: 'OPENAI',
     aiModel: 'gpt-4o'
@@ -126,23 +131,26 @@ export default function SettingsPage() {
     }
   };
 
-  const testBitget = async (isDemo = false) => {
+  const testExchange = async (isDemo = false) => {
     setTestingBitget(true);
     setStatus(s => ({ ...s, bitget: 'testing' }));
     try {
-      const payload = isDemo ? {
-        bitgetDemoApiKey: form.bitgetDemoApiKey,
-        bitgetDemoApiSecret: form.bitgetDemoApiSecret,
-        bitgetDemoPassphrase: form.bitgetDemoPassphrase,
-        isDemo: true
-      } : {
+      const payload = {
+        exchangeId: form.activeExchange,
         bitgetApiKey: form.bitgetApiKey,
         bitgetApiSecret: form.bitgetApiSecret,
         bitgetPassphrase: form.bitgetPassphrase,
-        isDemo: false
+        bitgetDemoApiKey: form.bitgetDemoApiKey,
+        bitgetDemoApiSecret: form.bitgetDemoApiSecret,
+        bitgetDemoPassphrase: form.bitgetDemoPassphrase,
+        binanceApiKey: form.binanceApiKey,
+        binanceApiSecret: form.binanceApiSecret,
+        binanceDemoApiKey: form.binanceDemoApiKey,
+        binanceDemoApiSecret: form.binanceDemoApiSecret,
+        isDemo
       };
 
-      const res = await fetch('/api/test/bitget', {
+      const res = await fetch('/api/test/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -150,13 +158,13 @@ export default function SettingsPage() {
       const data = await res.json();
       if (res.ok && data.success) {
         setStatus(s => ({ ...s, bitget: 'verified' }));
-        alert(`${isDemo ? 'DEMO' : 'LIVE'} ${data.message}\nยอดเงินปัจจุบัน: ${data.balance} USDT`);
+        alert(`${data.message}\nยอดเงินปัจจุบัน: ${data.balance} USDT`);
       } else {
         setStatus(s => ({ ...s, bitget: 'failed' }));
         alert(data.message);
       }
     } catch (e) {
-      alert('Bitget Connection Error');
+      alert('Exchange Connection Error');
       setStatus(s => ({ ...s, bitget: 'failed' }));
     } finally {
       setTestingBitget(false);
@@ -217,33 +225,35 @@ export default function SettingsPage() {
                   <div className="flex justify-between items-center mb-6">
                     <div>
                       <h2 className="text-xl font-bold text-white mb-1 font-thai">ตั้งค่าบัญชีจริง (Live Trading)</h2>
-                      <p className="text-xs text-teal-500 italic font-thai uppercase tracking-tighter">Bitget V2 - Main Account Credentials</p>
+                      <p className="text-xs text-teal-500 italic font-thai uppercase tracking-tighter">Main Account Credentials</p>
                     </div>
-                    <div className="bg-teal-500/10 text-teal-400 text-[10px] uppercase px-3 py-1 rounded-full font-bold border border-teal-500/30 flex items-center gap-1">
-                      <Zap size={10} /> แนะนำสำหรับการรันจริง
+                    
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => setForm({...form, activeExchange: 'bitget'})} className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase transition-all ${form.activeExchange === 'bitget' ? 'bg-teal-500 text-[#0b1121]' : 'bg-slate-800 text-slate-400 border border-slate-700'}`}>Bitget</button>
+                      <button type="button" onClick={() => setForm({...form, activeExchange: 'binance'})} className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase transition-all ${form.activeExchange === 'binance' ? 'bg-yellow-500 text-[#0b1121]' : 'bg-slate-800 text-slate-400 border border-slate-700'}`}>Binance</button>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
-                      <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Live API Key</label>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Live API Key ({form.activeExchange.toUpperCase()})</label>
                       <div className="relative">
                         <input 
                           type={showBitgetKeys ? "text" : "password"}
-                          value={form.bitgetApiKey}
-                          onChange={e => setForm({...form, bitgetApiKey: e.target.value})}
+                          value={form.activeExchange === 'binance' ? form.binanceApiKey : form.bitgetApiKey}
+                          onChange={e => setForm({...form, [form.activeExchange === 'binance' ? 'binanceApiKey' : 'bitgetApiKey']: e.target.value})}
                           className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-teal-500 pr-10"
                         />
                         <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showBitgetKeys ? 'text-teal-400' : 'text-slate-600'}`} size={16} onClick={() => setShowBitgetKeys(!showBitgetKeys)} />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Live Secret Key</label>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Live Secret Key ({form.activeExchange.toUpperCase()})</label>
                       <div className="relative">
                         <input 
                           type={showBitgetKeys ? "text" : "password"}
-                          value={form.bitgetApiSecret}
-                          onChange={e => setForm({...form, bitgetApiSecret: e.target.value})}
+                          value={form.activeExchange === 'binance' ? form.binanceApiSecret : form.bitgetApiSecret}
+                          onChange={e => setForm({...form, [form.activeExchange === 'binance' ? 'binanceApiSecret' : 'bitgetApiSecret']: e.target.value})}
                           className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-300 focus:outline-none focus:border-teal-500 pr-10"
                         />
                         <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showBitgetKeys ? 'text-teal-400' : 'text-slate-600'}`} size={16} onClick={() => setShowBitgetKeys(!showBitgetKeys)} />
@@ -251,6 +261,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
+                  {form.activeExchange === 'bitget' && (
                   <div className="mb-6">
                     <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Live Passphrase</label>
                     <div className="relative">
@@ -263,17 +274,18 @@ export default function SettingsPage() {
                       <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showPassphrase ? 'text-teal-400' : 'text-slate-600'}`} size={16} onClick={() => setShowPassphrase(!showPassphrase)} />
                     </div>
                   </div>
+                  )}
                   
                   <div className="flex gap-2">
                     <button 
-                      type="button" onClick={() => testBitget(false)} disabled={testingBitget}
+                      type="button" onClick={() => testExchange(false)} disabled={testingBitget}
                       className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[10px] uppercase font-bold tracking-widest flex items-center justify-center gap-2 transition-all border border-slate-700/50"
                     >
                       {testingBitget ? <RefreshCw size={14} className="animate-spin" /> : <CheckCircle size={14} />}
                       ทดสอบบัญชีจริง
                     </button>
                     <button 
-                      type="button" onClick={() => testBitget(true)} disabled={testingBitget}
+                      type="button" onClick={() => testExchange(true)} disabled={testingBitget}
                       className="flex-1 py-3 bg-orange-900/20 hover:bg-orange-900/40 text-orange-400 rounded-xl text-[10px] uppercase font-bold tracking-widest flex items-center justify-center gap-2 transition-all border border-orange-800/30"
                     >
                       {testingBitget ? <RefreshCw size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -287,41 +299,39 @@ export default function SettingsPage() {
                   <div className="absolute top-0 left-0 w-full h-1 bg-orange-500/30"></div>
                   <div className="flex justify-between items-center mb-6">
                     <div>
-                      <h2 className="text-xl font-bold text-white mb-1 font-thai text-orange-400">โหมดจำลองจริง (Bitget Demo)</h2>
+                      <h2 className={`text-xl font-bold text-white mb-1 font-thai ${form.activeExchange === 'binance' ? 'text-yellow-400' : 'text-orange-400'}`}>โหมดจำลองจริง ({form.activeExchange.toUpperCase()} Demo)</h2>
                       <p className="text-[10px] text-slate-500 italic font-thai uppercase tracking-tighter">Real-Market Virtual Environment Support</p>
-                    </div>
-                    <div className="bg-orange-500/10 text-orange-400 text-[10px] uppercase px-3 py-1 rounded-full font-bold border border-orange-500/20">
-                      Paper Trading V2
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                     <div>
-                      <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Demo API Key</label>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Demo API Key ({form.activeExchange.toUpperCase()})</label>
                       <div className="relative">
                         <input 
                           type={showDemoKeys ? "text" : "password"}
-                          value={form.bitgetDemoApiKey}
-                          onChange={e => setForm({...form, bitgetDemoApiKey: e.target.value})}
-                          className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-400 focus:outline-none focus:border-orange-500 pr-10"
+                          value={form.activeExchange === 'binance' ? form.binanceDemoApiKey : form.bitgetDemoApiKey}
+                          onChange={e => setForm({...form, [form.activeExchange === 'binance' ? 'binanceDemoApiKey' : 'bitgetDemoApiKey']: e.target.value})}
+                          className={`w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-400 focus:outline-none pr-10 ${form.activeExchange === 'binance' ? 'focus:border-yellow-500' : 'focus:border-orange-500'}`}
                         />
-                        <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? 'text-orange-400' : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
+                        <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? (form.activeExchange === 'binance' ? 'text-yellow-400' : 'text-orange-400') : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Demo Secret Key</label>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Demo Secret Key ({form.activeExchange.toUpperCase()})</label>
                       <div className="relative">
                         <input 
                           type={showDemoKeys ? "text" : "password"}
-                          value={form.bitgetDemoApiSecret}
-                          onChange={e => setForm({...form, bitgetDemoApiSecret: e.target.value})}
-                          className="w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-400 focus:outline-none focus:border-orange-500 pr-10"
+                          value={form.activeExchange === 'binance' ? form.binanceDemoApiSecret : form.bitgetDemoApiSecret}
+                          onChange={e => setForm({...form, [form.activeExchange === 'binance' ? 'binanceDemoApiSecret' : 'bitgetDemoApiSecret']: e.target.value})}
+                          className={`w-full bg-[#0b1121] border border-slate-800 rounded-xl px-4 py-3 text-sm text-slate-400 focus:outline-none pr-10 ${form.activeExchange === 'binance' ? 'focus:border-yellow-500' : 'focus:border-orange-500'}`}
                         />
-                        <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? 'text-orange-400' : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
+                        <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? (form.activeExchange === 'binance' ? 'text-yellow-400' : 'text-orange-400') : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
                       </div>
                     </div>
                   </div>
 
+                  {form.activeExchange === 'bitget' && (
                   <div>
                     <label className="block text-[10px] text-slate-500 uppercase tracking-widest font-bold mb-2">Demo Passphrase</label>
                     <div className="relative">
@@ -334,11 +344,12 @@ export default function SettingsPage() {
                       <Eye className={`absolute right-3 top-3.5 cursor-pointer ${showDemoKeys ? 'text-orange-400' : 'text-slate-600'}`} size={16} onClick={() => setShowDemoKeys(!showDemoKeys)} />
                     </div>
                   </div>
+                  )}
 
-                  <div className="mt-6 p-4 bg-orange-950/20 border border-orange-800/20 rounded-xl flex gap-3 items-start">
-                     <AlertCircle className="text-orange-400 shrink-0 mt-0.5" size={16} />
-                     <p className="text-[10px] text-orange-400/80 leading-relaxed font-thai">
-                       💡 **วิธีเปิดใช้งาน Demo**: ล็อกอิน Bitget → สลับเป็น **Demo Mode** → ไปที่ API Management → สร้าง **Demo API Key** (ต้องสร้างแยกจากคีย์หลัก)
+                  <div className={`mt-6 p-4 border rounded-xl flex gap-3 items-start ${form.activeExchange === 'binance' ? 'bg-yellow-950/20 border-yellow-800/20 text-yellow-500/70' : 'bg-orange-950/20 border-orange-800/20 text-orange-400/80'}`}>
+                     <AlertCircle className={`shrink-0 mt-0.5 ${form.activeExchange === 'binance' ? 'text-yellow-500' : 'text-orange-400'}`} size={16} />
+                     <p className="text-[10px] leading-relaxed font-thai">
+                       💡 **วิธีเปิดใช้งาน Demo**: {form.activeExchange === 'binance' ? 'สมัคร Binance Testnet และนำ API Keys มาใส่ที่นี่ (Binance ไม่มี Passphrase)' : 'ล็อกอิน Bitget → สลับเป็น **Demo Mode** → ไปที่ API Management → สร้าง **Demo API Key**'}
                      </p>
                   </div>
                 </div>

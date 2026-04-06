@@ -22,6 +22,11 @@ export async function GET(_req) {
         bitgetDemoApiKey: true,
         bitgetDemoApiSecret: true,
         bitgetDemoPassphrase: true,
+        binanceApiKey: true,
+        binanceApiSecret: true,
+        binanceDemoApiKey: true,
+        binanceDemoApiSecret: true,
+        activeExchange: true,
         aiApiKey: true,
         aiProvider: true,
         aiModel: true
@@ -38,6 +43,11 @@ export async function GET(_req) {
       bitgetDemoApiKey: mask(user.bitgetDemoApiKey),
       bitgetDemoApiSecret: mask(user.bitgetDemoApiSecret),
       bitgetDemoPassphrase: mask(user.bitgetDemoPassphrase),
+      binanceApiKey: mask(user.binanceApiKey),
+      binanceApiSecret: mask(user.binanceApiSecret),
+      binanceDemoApiKey: mask(user.binanceDemoApiKey),
+      binanceDemoApiSecret: mask(user.binanceDemoApiSecret),
+      activeExchange: user.activeExchange || 'bitget',
       aiApiKey: mask(user.aiApiKey),
       aiProvider: user.aiProvider || 'OPENAI',
       aiModel: user.aiModel || 'gpt-4o'
@@ -61,6 +71,9 @@ export async function POST(req) {
     const { 
       bitgetApiKey, bitgetApiSecret, bitgetPassphrase, 
       bitgetDemoApiKey, bitgetDemoApiSecret, bitgetDemoPassphrase, 
+      binanceApiKey, binanceApiSecret,
+      binanceDemoApiKey, binanceDemoApiSecret,
+      activeExchange,
       aiApiKey, aiProvider, aiModel 
     } = body;
     const userId = session.user.id;
@@ -80,6 +93,14 @@ export async function POST(req) {
     if (shouldUpdate(bitgetDemoApiKey)) updateData.bitgetDemoApiKey = encrypt(bitgetDemoApiKey);
     if (shouldUpdate(bitgetDemoApiSecret)) updateData.bitgetDemoApiSecret = encrypt(bitgetDemoApiSecret);
     if (shouldUpdate(bitgetDemoPassphrase)) updateData.bitgetDemoPassphrase = encrypt(bitgetDemoPassphrase);
+    
+    if (shouldUpdate(binanceApiKey)) updateData.binanceApiKey = encrypt(binanceApiKey);
+    if (shouldUpdate(binanceApiSecret)) updateData.binanceApiSecret = encrypt(binanceApiSecret);
+    if (shouldUpdate(binanceDemoApiKey)) updateData.binanceDemoApiKey = encrypt(binanceDemoApiKey);
+    if (shouldUpdate(binanceDemoApiSecret)) updateData.binanceDemoApiSecret = encrypt(binanceDemoApiSecret);
+
+    if (activeExchange) updateData.activeExchange = activeExchange;
+
     if (shouldUpdate(aiApiKey)) updateData.aiApiKey = encrypt(aiApiKey);
 
     console.log('[API/Users/Me] Final Update Data Keys:', Object.keys(updateData));

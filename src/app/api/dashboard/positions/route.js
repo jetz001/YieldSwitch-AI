@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { NextResponse } from 'next/server';
 
-import { getBitgetClient } from '@/services/bitget';
+import { getExchangeClients } from '@/engine/engineManager';
 
 export async function GET(req) {
   try {
@@ -23,17 +23,14 @@ export async function GET(req) {
     const search = searchParams.get('search')?.trim().toUpperCase() || '';
     const marketType = (searchParams.get('marketType') || config.marketType || 'FUTURES').toUpperCase();
 
-    const isDemo = config.isPaperTrading && !!config.User?.bitgetDemoApiKey;
-    const liveKeysOk = !config.isPaperTrading && !!config.User?.bitgetApiKey;
+    const isDemo = config.isPaperTrading && (config.User?.bitgetDemoApiKey || config.User?.binanceDemoApiKey);
+    const liveKeysOk = !config.isPaperTrading && (config.User?.bitgetApiKey || config.User?.binanceApiKey);
     if (!isDemo && !liveKeysOk) return NextResponse.json([]);
 
-    const spotClient = isDemo
-      ? getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, 'SPOT')
-      : getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'SPOT');
-
-    const futuresClient = isDemo
-      ? getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, 'FUTURES')
-      : getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'FUTURES');
+    const { spot, futures } = await getExchangeClients(config.id);
+    if (!spot || !futures) return NextResponse.json([]);
+    const spotClient = spot;
+    const futuresClient = futures;
 
     const normalizeSymbol = (s) => String(s || '').toUpperCase();
     const normalizeFuturesSide = (raw) => {

@@ -2,7 +2,7 @@ import { runCognitiveLoop } from './aiCognitiveDualLoop.js';
 import { checkZeroBalance } from './guards/balanceGuard.js';
 import { executeStrategy, closePositionBySymbol } from './executionGuard.js';
 import { checkGlobalCircuitBreaker } from './mathGuard.js';
-import { getBitgetClient } from '../services/bitget.js';
+import { getBitgetClient, getExchangeClient } from '../services/exchangeFactory.js';
 import { prisma } from '../lib/db.js';
 import { logPhase } from './aiBase.js';
 
@@ -46,7 +46,7 @@ export async function startEngine(botConfigId) {
         // ═══════════════════════════════════════════════
         // §3 CIRCUIT BREAKER & BALANCE CHECKS
         // ═══════════════════════════════════════════════
-        const exchangeClient = getExchangeClient(config);
+        const exchangeClient = getLocalExchangeClient(config);
         if (exchangeClient) {
           try {
             let walletEquity = 0;
@@ -114,16 +114,30 @@ export async function startEngine(botConfigId) {
         const cycleResult = await runCognitiveLoop(botConfigId);
         if (cycleResult && cycleResult.status === 'SUCCESS' && cycleResult.aiTasks) {
           if (config.User) {
-            let bitgetSpot, bitgetFutures;
+            let engineClientSpot, engineClientFutures;
             
-            // If in Paper Mode and Demo Keys are provided -> Use Bitget Native Demo
-            if (config.isPaperTrading && config.User.bitgetDemoApiKey) {
-              console.log(`[Engine] Using Bitget NATIVE DEMO for bot ${botConfigId}`);
-              bitgetSpot = getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, 'SPOT');
-              bitgetFutures = getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, 'FUTURES');
+            // Determine which exchange to use
+            const exchangeId = String(config.exchangeId || config.User?.activeExchange || 'bitget').toLowerCase();
+            console.log(`[Engine] Using Exchange: ${exchangeId.toUpperCase()} for bot ${botConfigId}`);
+
+            // If in Paper Mode and Demo Keys are provided -> Use Native Demo
+            if (config.isPaperTrading) {
+              const demoKey = exchangeId === 'binance' ? config.User.binanceDemoApiKey : config.User.bitgetDemoApiKey;
+              const demoSecret = exchangeId === 'binance' ? config.User.binanceDemoApiSecret : config.User.bitgetDemoApiSecret;
+              const demoPass = exchangeId === 'binance' ? undefined : config.User.bitgetDemoPassphrase;
+              
+              if (demoKey) {
+                console.log(`[Engine] Using NATIVE DEMO for bot ${botConfigId}`);
+                engineClientSpot = getExchangeClient(exchangeId, demoKey, demoSecret, demoPass, true, 'SPOT');
+                engineClientFutures = getExchangeClient(exchangeId, demoKey, demoSecret, demoPass, true, 'FUTURES');
+              }
             } else {
-              bitgetSpot = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'SPOT');
-              bitgetFutures = getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'FUTURES');
+              const liveKey = exchangeId === 'binance' ? config.User.binanceApiKey : config.User.bitgetApiKey;
+              const liveSecret = exchangeId === 'binance' ? config.User.binanceApiSecret : config.User.bitgetApiSecret;
+              const livePass = exchangeId === 'binance' ? undefined : config.User.bitgetPassphrase;
+              
+              engineClientSpot = getExchangeClient(exchangeId, liveKey, liveSecret, livePass, false, 'SPOT');
+              engineClientFutures = getExchangeClient(exchangeId, liveKey, liveSecret, livePass, false, 'FUTURES');
             }
 
             if (cycleResult.aiTasks?.cancel_orders && cycleResult.aiTasks.cancel_orders.length > 0) {
@@ -132,12 +146,12 @@ export async function startEngine(botConfigId) {
                 if (!orderId) continue;
                 let cancelled = false;
                 try {
-                  await bitgetFutures.cancelOrder(orderId);
+                  await engineClientFutures.cancelOrder(orderId);
                   cancelled = true;
                 } catch (e) {}
                 if (!cancelled) {
                   try {
-                    await bitgetSpot.cancelOrder(orderId);
+                    await engineClientSpot.cancelOrder(orderId);
                     cancelled = true;
                   } catch (e) {}
                 }
@@ -159,6 +173,18 @@ export async function startEngine(botConfigId) {
                 const rawParts = raw.includes('|') ? raw.split('|') : [raw];
                 const closeSymbol = rawParts[0];
                 if (!closeSymbol) continue;
+
+                // Hallucination Guard: Verify if the coin is actually in our active positions
+                const baseCoin = closeSymbol.split('/')[0].toUpperCase();
+                const posExists = (cycleResult.activePositionsForAI || []).some(p => 
+                  p.symbol === closeSymbol || p.symbol.startsWith(baseCoin)
+                );
+
+                if (!posExists) {
+                  console.warn(`[Engine] 👻 AI Ghost Trade Blocked: AI tried to close ${closeSymbol} but it is not in active positions.`);
+                  continue;
+                }
+
                 const safeReason =
                   typeof posToClose?.reason === 'string' && posToClose.reason.trim().length > 0
                     ? posToClose.reason.trim()
@@ -182,20 +208,30 @@ export async function startEngine(botConfigId) {
                 if (cleanCloseSymbol.endsWith(':SELL')) cleanCloseSymbol = cleanCloseSymbol.replace(':SELL', ':USDT');
                 if (cleanCloseSymbol.endsWith(':BUY')) cleanCloseSymbol = cleanCloseSymbol.replace(':BUY', ':USDT');
 
+                const extractMarketTypeFromDirectives = (directives) => {
+                  const text = String(directives || '');
+                  const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
+                  if (marker?.[1]) return marker[1].toUpperCase();
+                  const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
+                  if (alt?.[1]) return alt[1].toUpperCase();
+                  return null;
+                };
+                const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
+
                 if (marketType === 'SPOT') {
-                  await closePositionBySymbol(bitgetSpot, botConfigId, closeSymbol, closeSide, safeReason);
+                  await closePositionBySymbol(engineClientSpot, botConfigId, closeSymbol, closeSide, safeReason);
                 } else if (marketType === 'FUTURES') {
-                  await closePositionBySymbol(bitgetFutures, botConfigId, cleanCloseSymbol, closeSide, safeReason);
+                  await closePositionBySymbol(engineClientFutures, botConfigId, cleanCloseSymbol, closeSide, safeReason);
                 } else {
-                  let closed = await closePositionBySymbol(bitgetFutures, botConfigId, cleanCloseSymbol, closeSide, safeReason);
+                  let closed = await closePositionBySymbol(engineClientFutures, botConfigId, cleanCloseSymbol, closeSide, safeReason);
                   if (!closed) {
-                    await closePositionBySymbol(bitgetSpot, botConfigId, closeSymbol, closeSide, safeReason);
+                    await closePositionBySymbol(engineClientSpot, botConfigId, closeSymbol, closeSide, safeReason);
                   }
                 }
               }
             }
             
-            await executeStrategy(bitgetSpot, bitgetFutures, cycleResult.aiTasks, botConfigId, cycleResult.candidates || []);
+            await executeStrategy(engineClientSpot, engineClientFutures, cycleResult.aiTasks, botConfigId, cycleResult.candidates || []);
           }
         } else if (cycleResult && cycleResult.errorType === 'QUOTA') {
           console.warn(`[Engine] ⚠️ Quota Exhausted. Waiting 10 minutes...`);
@@ -220,13 +256,21 @@ export async function startEngine(botConfigId) {
   loop().catch(err => console.error(`[Engine] Non-blocking loop error for ${botConfigId}:`, err));
 }
 
-function getExchangeClient(config) {
+function getLocalExchangeClient(config) {
   try {
     const user = config.User;
-    if (config.isPaperTrading && user?.bitgetDemoApiKey) {
-      return getBitgetClient(user.bitgetDemoApiKey, user.bitgetDemoApiSecret, user.bitgetDemoPassphrase, true);
-    } else if (user?.bitgetApiKey) {
-      return getBitgetClient(user.bitgetApiKey, user.bitgetApiSecret, user.bitgetPassphrase, false);
+    const exchangeId = String(config.exchangeId || user?.activeExchange || 'bitget').toLowerCase();
+    
+    if (config.isPaperTrading) {
+      const demoKey = exchangeId === 'binance' ? user.binanceDemoApiKey : user.bitgetDemoApiKey;
+      const demoSecret = exchangeId === 'binance' ? user.binanceDemoApiSecret : user.bitgetDemoApiSecret;
+      const demoPass = exchangeId === 'binance' ? undefined : user.bitgetDemoPassphrase;
+      if (demoKey) return getExchangeClient(exchangeId, demoKey, demoSecret, demoPass, true);
+    } else {
+      const liveKey = exchangeId === 'binance' ? user.binanceApiKey : user.bitgetApiKey;
+      const liveSecret = exchangeId === 'binance' ? user.binanceApiSecret : user.bitgetApiSecret;
+      const livePass = exchangeId === 'binance' ? undefined : user.bitgetPassphrase;
+      if (liveKey) return getExchangeClient(exchangeId, liveKey, liveSecret, livePass, false);
     }
     return null;
   } catch (e) { return null; }
@@ -242,19 +286,28 @@ export async function getExchangeClients(botConfigId) {
   const user = config.User;
   let spot = null;
   let futures = null;
+  const exchangeId = config.exchangeId || user?.activeExchange || 'bitget';
 
-  if (config.isPaperTrading && user?.bitgetDemoApiKey) {
-    futures = getBitgetClient(user.bitgetDemoApiKey, user.bitgetDemoApiSecret, user.bitgetDemoPassphrase, true);
-    spot = futures; // Bitget Demo Unified
-  } else {
-    if (user?.bitgetApiKey) {
-      spot = getBitgetClient(user.bitgetApiKey, user.bitgetApiSecret, user.bitgetPassphrase, false);
+  if (config.isPaperTrading) {
+    const demoKey = exchangeId === 'binance' ? user.binanceDemoApiKey : user.bitgetDemoApiKey;
+    const demoSecret = exchangeId === 'binance' ? user.binanceDemoApiSecret : user.bitgetDemoApiSecret;
+    const demoPass = exchangeId === 'binance' ? undefined : user.bitgetDemoPassphrase;
+    
+    if (demoKey) {
+      futures = getExchangeClient(exchangeId, demoKey, demoSecret, demoPass, true, 'FUTURES');
+      spot = futures; 
     }
-    // For live, we might need a separate futures client if they differ, 
-    // but usually getBitgetClient handles both if it's V2.
-    futures = spot; 
+  } else {
+    const liveKey = exchangeId === 'binance' ? user.binanceApiKey : user.bitgetApiKey;
+    const liveSecret = exchangeId === 'binance' ? user.binanceApiSecret : user.bitgetApiSecret;
+    const livePass = exchangeId === 'binance' ? undefined : user.bitgetPassphrase;
+    
+    if (liveKey) {
+      spot = getExchangeClient(exchangeId, liveKey, liveSecret, livePass, false, 'SPOT');
+      futures = getExchangeClient(exchangeId, liveKey, liveSecret, livePass, false, 'FUTURES');
+    }
   }
-  
+
   return { spot, futures };
 }
 

@@ -57,6 +57,7 @@ model BotConfig {
   isPaperTrading                  Boolean         @default(true)
   aiDirectives                    String?         @default("เน้นความปลอดภัยและกำไรที่สม่ำเสมอ")
   marketType                      MarketType      @default(SPOT)
+  exchangeId                      String          @default("bitget") // bitget or binance
   AILogStream                     AILogStream[]
   ActiveTranche                   ActiveTranche[]
   User                            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -91,10 +92,15 @@ model User {
   consentDate          DateTime?
   lastActive           DateTime           @default(now())
   createdAt            DateTime           @default(now())
-  updatedAt            DateTime
+  updatedAt            DateTime           @updatedAt
   bitgetDemoApiKey     String?
   bitgetDemoApiSecret  String?
   bitgetDemoPassphrase String?
+  binanceApiKey        String?
+  binanceApiSecret     String?
+  binanceDemoApiKey    String?
+  binanceDemoApiSecret String?
+  activeExchange       String             @default("bitget") // bitget or binance
   BotConfig            BotConfig[]
   SecurityAbuseLog     SecurityAbuseLog[]
 }

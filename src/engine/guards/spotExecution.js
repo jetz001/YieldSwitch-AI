@@ -100,7 +100,8 @@ export async function executeSpotStrategy(client, config, botConfigId, tasks, ca
         }
 
         const user = config.User;
-        const hasNativeDemo = config.isPaperTrading && !!user.bitgetDemoApiKey;
+        const exchangeId = config.exchangeId || user?.activeExchange || 'bitget';
+        const hasNativeDemo = config.isPaperTrading && (user.bitgetDemoApiKey || user.binanceDemoApiKey);
         const isShadowMode = confidence < 70 || strategy === 'SHADOW_TRADE' || (config.isPaperTrading && !hasNativeDemo);
 
         let freeBalanceUsdt = 0;
@@ -129,7 +130,7 @@ export async function executeSpotStrategy(client, config, botConfigId, tasks, ca
         const stopLossPrice = calculateSLPrice(entryPrice, normalizedSide, stopLossPercent);
         const tpTiers = calculateTPTiers(entryPrice, normalizedSide, stopLossPercent);
 
-        const modeLabel = isShadowMode ? 'Shadow (Sim)' : (config.isPaperTrading ? 'Demo (Bitget)' : 'Live (Bitget)');
+        const modeLabel = isShadowMode ? 'Shadow (Sim)' : (config.isPaperTrading ? `Demo (${exchangeId.toUpperCase()})` : `Live (${exchangeId.toUpperCase()})`);
         await logPhase(botConfigId, 'IMPLEMENT', `Signal LONG (Spot) ${mappedSymbol} (${symbol}): ${modeLabel} (${confidence}%)`);
 
         if (isShadowMode) {

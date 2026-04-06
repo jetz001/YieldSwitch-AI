@@ -202,7 +202,8 @@ export async function executeFuturesStrategy(client, engineClientSpot, config, b
         }
 
         const user = config.User;
-        const hasNativeDemo = config.isPaperTrading && !!user.bitgetDemoApiKey;
+        const exchangeId = config.exchangeId || user?.activeExchange || 'bitget';
+        const hasNativeDemo = config.isPaperTrading && (user.bitgetDemoApiKey || user.binanceDemoApiKey);
         const isShadowMode = confidence < 70 || strategy === 'SHADOW_TRADE' || (config.isPaperTrading && !hasNativeDemo);
 
         // Futures Balance Guard w/ Auto-Transfer Capability
@@ -274,7 +275,7 @@ export async function executeFuturesStrategy(client, engineClientSpot, config, b
         const tpTiers = calculateTPTiers(entryPrice, normalizedSide, stopLossPercent);
 
         const trancheSide = normalizedSide === 'sell' ? 'SHORT' : 'LONG';
-        const modeLabel = isShadowMode ? 'Shadow (Sim)' : (config.isPaperTrading ? 'Demo (Bitget)' : 'Live (Bitget)');
+        const modeLabel = isShadowMode ? 'Shadow (Sim)' : (config.isPaperTrading ? `Demo (${exchangeId.toUpperCase()})` : `Live (${exchangeId.toUpperCase()})`);
         
         await logPhase(botConfigId, 'IMPLEMENT', `Signal ${trancheSide} ${mappedSymbol} (${symbol}): ${modeLabel} (${confidence}%)`);
 

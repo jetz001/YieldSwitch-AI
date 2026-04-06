@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { NextResponse } from 'next/server';
 import { startEngine, stopEngine } from '@/engine/engineManager';
-import { getBitgetClient } from '@/services/bitget';
+import { getExchangeClient } from '@/services/exchangeFactory';
 import { getLLMClient } from '@/services/llmProvider';
 import { sanitizeInput, validateNumeric } from '@/utils/security';
 
@@ -23,21 +23,30 @@ export async function POST(req) {
       });
 
       const isPaperMode = isPaperTrading !== undefined ? isPaperTrading : false;
-      const bitgetApiKey = isPaperMode ? user.bitgetDemoApiKey : user.bitgetApiKey;
-      const bitgetApiSecret = isPaperMode ? user.bitgetDemoApiSecret : user.bitgetApiSecret;
-      const bitgetApiPass = isPaperMode ? user.bitgetDemoPassphrase : user.bitgetPassphrase;
+      const exchangeId = user.activeExchange || 'bitget';
+      let exApiKey, exApiSecret, exApiPass;
 
-      if (!bitgetApiKey || !bitgetApiSecret || !bitgetApiPass || !user.aiApiKey) {
+      if (exchangeId === 'binance') {
+        exApiKey = isPaperMode ? user.binanceDemoApiKey : user.binanceApiKey;
+        exApiSecret = isPaperMode ? user.binanceDemoApiSecret : user.binanceApiSecret;
+        exApiPass = undefined;
+      } else {
+        exApiKey = isPaperMode ? user.bitgetDemoApiKey : user.bitgetApiKey;
+        exApiSecret = isPaperMode ? user.bitgetDemoApiSecret : user.bitgetApiSecret;
+        exApiPass = isPaperMode ? user.bitgetDemoPassphrase : user.bitgetPassphrase;
+      }
+
+      if (!exApiKey || !exApiSecret || (exchangeId === 'bitget' && !exApiPass) || !user.aiApiKey) {
         return NextResponse.json({ 
           error: 'API_KEYS_MISSING',
-          message: 'กรุณากรอก API Key ทั้ง Bitget และ AI ในหน้าตั้งค่าก่อนเริ่มใช้งาน'
+          message: `กรุณากรอก API Key ทั้ง ${exchangeId.toUpperCase()} และ AI ในหน้าตั้งค่าก่อนเริ่มใช้งาน`
         }, { status: 400 });
       }
 
-      // Live Connectivity Check - Bitget
+      // Live Connectivity Check - Exchange
       try {
-        const client = getBitgetClient(bitgetApiKey, bitgetApiSecret, bitgetApiPass, isPaperMode);
-        await client.fetchBalance({ type: isPaperMode ? 'swap' : 'spot' });
+        const client = getExchangeClient(exchangeId, exApiKey, exApiSecret, exApiPass, isPaperMode, 'FUTURES');
+        await client.fetchBalance({ type: isPaperMode ? 'swap' : 'spot' }).catch(() => client.fetchBalance());
       } catch (err) {
         console.error('Bitget Connectivity Check Failed:', err.message);
         return NextResponse.json({ 

@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db';
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 import { NextResponse } from 'next/server';
-import { getBitgetClient } from '@/services/bitget';
+import { getExchangeClients } from '@/engine/engineManager';
 
 function normalizeEntryAction(side) {
   const s = (side || '').toUpperCase();
@@ -56,17 +56,13 @@ export async function GET(req) {
     const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 100)) : 50;
 
     const isDemo = config.isPaperTrading && !!config.User?.bitgetDemoApiKey;
-    const liveKeysOk = !config.isPaperTrading && !!config.User?.bitgetApiKey;
+    const liveKeysOk = !config.isPaperTrading && (config.User?.bitgetApiKey || config.User?.binanceApiKey);
     if (!isDemo && !liveKeysOk) return NextResponse.json([]);
 
     const marketType = (searchParams.get('marketType') || config.marketType || 'FUTURES').toUpperCase();
-    const client = marketType === 'SPOT'
-      ? (isDemo
-          ? getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, 'SPOT')
-          : getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'SPOT'))
-      : (isDemo
-          ? getBitgetClient(config.User.bitgetDemoApiKey, config.User.bitgetDemoApiSecret, config.User.bitgetDemoPassphrase, true, 'FUTURES')
-          : getBitgetClient(config.User.bitgetApiKey, config.User.bitgetApiSecret, config.User.bitgetPassphrase, false, 'FUTURES'));
+    const { spot, futures } = await getExchangeClients(config.id);
+    const client = marketType === 'SPOT' ? spot : futures;
+    if (!client) return NextResponse.json([]);
 
     const norm = (s) => String(s || '').toUpperCase();
     const wantsSearch = search ? norm(search) : '';

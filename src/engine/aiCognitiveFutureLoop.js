@@ -1,5 +1,6 @@
 import { getContext, callLLM, cleanJson, logPhase, formatTradeDetails, formatReasoningInfo } from './aiBase.js';
-import { getBitgetClient } from '../services/bitget.js';
+import { getExchangeClients } from './engineManager.js';
+import { getBitgetClient, getExchangeClient } from '../services/exchangeFactory.js';
 
 export async function runCognitiveFutureLoop(botConfigId) {
   const context = await getContext(botConfigId, 'FUTURES');
@@ -77,14 +78,9 @@ reasoning: Plain English or Thai summary (max 20 words, must be punchy like: 'BT
       : (safeTrades.length > 0 ? 'DIRECTIONAL' : 'NO_TRADE');
 
   const preflightFuturesTrades = async (trades) => {
-    const user = config.User;
-    const isDemo = !!config.isPaperTrading && !!user?.bitgetDemoApiKey;
-    const apiKey = isDemo ? user.bitgetDemoApiKey : user.bitgetApiKey;
-    const apiSecret = isDemo ? user.bitgetDemoApiSecret : user.bitgetApiSecret;
-    const apiPass = isDemo ? user.bitgetDemoPassphrase : user.bitgetPassphrase;
-    if (!apiKey || !apiSecret || !apiPass) return { trades: [], stats: { attempted: trades.length, ok: 0, noMarket: trades.length, tooSmall: 0 } };
-
-    const client = getBitgetClient(apiKey, apiSecret, apiPass, isDemo, 'FUTURES');
+    const { futures } = await getExchangeClients(botConfigId);
+    if (!futures) return { trades: [], stats: { attempted: trades.length, ok: 0, noMarket: trades.length, tooSmall: 0 } };
+    const client = futures;
     await client.loadMarkets().catch(() => {});
 
     const allocatedBudget = Number(config.allocatedPortfolioUsdt);

@@ -10,10 +10,16 @@ export async function runCognitiveFutureLoop(botConfigId) {
   await logPhase(
     botConfigId,
     'PLAN',
-    `[1. PLAN] 🧠 Checking Market (FUTURES): โพสิชันเปิดอยู่ ${activePositionsForAI?.length || 0} รายการ, ออเดอร์ค้าง ${openOrdersForAI?.length || 0} รายการ`
+    `[PLAN] [PORT CHECK] : Futures active: ${activePositionsForAI?.length || 0} Pos, ${openOrdersForAI?.length || 0} Pending.`
   );
 
-  const rules = `JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[],close_positions[],cancel_orders[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" or "sell" only. buy=LONG sell=SHORT. amount is USDT value (MIN 5 USDT). Max trades=${bulletsAvailable}. Review active_positions + open_orders. You MUST manage existing positions: decide HOLD vs CLOSE to take profit or cut loss. Use close_positions even if no new trades. If capital tight and a new trade is better, close_positions first. Futures usage <=50%. close_positions items must include {symbol,side,reason} where side is LONG or SHORT. cancel_orders items must include {id,reason}. Add optional key position_review(string) summarizing what to do with current positions. reasoning: technical summary (max 35 words; include RSI/EMA/Trend context).`;
+  const rules = `คุณคือ AI Crypto Analyst ที่ทำงานแบบ Real-time Stream เท่านั้น (Zero Logging - Transient Only).
+JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[],close_positions[],cancel_orders[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" or "sell" only. buy=LONG sell=SHORT. amount is USDT value (MIN 5 USDT). Max trades=${bulletsAvailable}. Review active_positions + open_orders. You MUST manage existing positions: decide HOLD vs CLOSE to take profit or cut loss. Use close_positions even if no new trades. Futures usage <=50%. close_positions items must include {symbol,side,reason} (LONG/SHORT). cancel_orders items must include {id,reason}. Add optional key position_review(string). 
+Use Crypto Decision Tree (DT-IDs) for logic:
+BULLISH: DT-BULL-01 (Strong Momentum/Breakout -> LONG), DT-BULL-02 (Healthy Pullback -> LONG), DT-BULL-03 (Strong Trend -> HOLD/Run Profit).
+BEARISH: DT-BEAR-01 (Dead Cat Bounce -> SHORT), DT-BEAR-02 (Support Breakdown -> EXIT/SHORT), DT-BEAR-03 (Oversold -> WAIT/HOLD).
+PROFIT/RISK: DT-SELL-01 (Hit Target -> CLOSE), DT-SELL-02 (Overbought/Greed -> P-SELL), DT-SELL-03 (Trend Reverse -> EXIT).
+reasoning: Plain English or Thai summary (max 20 words, must be punchy like: 'BTC choppy, FNG low. Stay neutral.' or 'DT-SELL-01: SOL Hit TP Target').`;
 
   const contextPayload = {
     trading_env: { bullets: bulletsAvailable, budget: config.allocatedPortfolioUsdt },
@@ -41,8 +47,8 @@ export async function runCognitiveFutureLoop(botConfigId) {
       aiOutput = JSON.parse(cleaned);
       console.log(`[AI Future Loop] JSON parsing successful`);
       
-      const reasoning = aiOutput.reasoning || 'วิเคราะห์ข้อมูลเสร็จสิ้น กำลังสรุปแผนการเทรด...';
-      await logPhase(botConfigId, 'PLAN', `[AI REASONING] ${reasoning}`);
+      const reasoning = aiOutput.reasoning || 'Market analyzed. Generating tasks.';
+      await logPhase(botConfigId, 'PLAN', `[PLAN] [AI REASONING] : ${reasoning}`);
       break; // Success
     } catch (parseErr) {
       if (parseErr.message?.includes('429') || parseErr.message?.includes('quota')) {
@@ -54,11 +60,11 @@ export async function runCognitiveFutureLoop(botConfigId) {
       if (retryCount > maxRetries) {
         console.error(`[AI Future Loop] JSON Parse Error after ${maxRetries} retries:`, parseErr.message);
         aiOutput = { strategy: 'NO_TRADE', confidence: 0, reasoning: 'fallback', trades: [], close_positions: [], cancel_orders: [] };
-        await logPhase(botConfigId, 'PLAN', `[AI ERROR] ไม่สามารถแปลง JSON ได้หลังจากพยายาม ${maxRetries} ครั้ง: ${parseErr.message.substring(0, 50)}...`);
+        await logPhase(botConfigId, 'PLAN', `[PLAN] [AI ERROR] : Cannot parse JSON after ${maxRetries} retries.`);
         break;
       }
       console.warn(`[AI Future Loop] JSON Parse failed, retrying (${retryCount}/${maxRetries})...`);
-      await logPhase(botConfigId, 'PLAN', `[AI DEBUG] JSON ผิดพลาด กำลังลองใหม่ (${retryCount}/${maxRetries})`);
+      await logPhase(botConfigId, 'PLAN', `[PLAN] [AI DEBUG] : JSON error, retrying (${retryCount}/${maxRetries})`);
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
@@ -171,39 +177,28 @@ export async function runCognitiveFutureLoop(botConfigId) {
   aiOutput.trades = preflight.trades;
 
   const implementDetails = formatTradeDetails(aiOutput.trades || [], candidates, 'FUTURES');
-  await logPhase(botConfigId, 'IMPLEMENT', `[2. IMPLEMENT] ⚙️ Applying Plan (FUTURES): ${implementDetails || safeStrategy} (${safeConfidence}%)`);
 
-  if (aiOutput.reasoning) {
-    const extra = formatReasoningInfo(aiOutput.trades || [], candidates, 'FUTURES');
-    if (extra) {
-      await logPhase(botConfigId, 'PLAN', `[AI PLAN] ${extra}`);
-    }
-  } else {
-    await logPhase(botConfigId, 'PLAN', `[AI REASONING] ระบบตรวจสอบตลาดแล้ว ไม่พบกลยุทธ์ที่ชัดเจนในรอบนี้ (Wait & See)`);
+  if (aiOutput.trades?.length > 0) {
+    aiOutput.trades.forEach(t => {
+      const sideLabel = t.side === 'buy' ? 'LONG' : 'SHORT';
+      logPhase(botConfigId, 'IMPLEMENT', `[ACTION] ${t.symbol} ${sideLabel} : Amt ${t.amount} USDT.`);
+    });
   }
 
+  aiOutput.close_positions?.forEach(t => {
+    logPhase(botConfigId, 'IMPLEMENT', `[ACTION] ${t.symbol} CLOSE-${t.side || 'POS'} : ${t.reason || 'Target Hit'}`);
+  });
+
   if (typeof aiOutput?.position_review === 'string' && aiOutput.position_review.trim().length > 0) {
-    await logPhase(botConfigId, 'PLAN', `[POSITION CHECK] ${aiOutput.position_review.trim()}`);
-  } else {
-    const toClose = Array.isArray(aiOutput?.close_positions) ? aiOutput.close_positions : [];
-    const closeList = toClose
-      .map(x => `${x?.symbol || '-'}(${String(x?.side || '').toUpperCase() || '-'})`)
-      .filter(Boolean)
-      .join(', ');
-    if (toClose.length > 0) {
-      await logPhase(botConfigId, 'PLAN', `[POSITION CHECK] แนะนำปิด ${toClose.length} รายการ: ${closeList}`);
-    } else if ((activePositionsForAI?.length || 0) > 0) {
-      await logPhase(botConfigId, 'PLAN', `[POSITION CHECK] คงสถานะเดิม ${activePositionsForAI.length} รายการ (ยังไม่เข้าเงื่อนไขปิดทำกำไร/ตัดขาดทุน)`);
-    }
+    await logPhase(botConfigId, 'TASK_CHECK', `[STATUS] PORT REVIEW : ${aiOutput.position_review.trim()}`);
+  } else if ((activePositionsForAI?.length || 0) > 0) {
+    await logPhase(botConfigId, 'TASK_CHECK', `[STATUS] ACTIVE POSITIONS : ${activePositionsForAI.length} Pos. Holding steady.`);
   }
 
   const trades = Array.isArray(aiOutput?.trades) ? aiOutput.trades : [];
-  const tradeSymbols = trades.map(t => t.symbol).join(', ');
-  const logMsg = trades.length > 0
-    ? `[3. TASK CHECK] 📋 Preparing trades: ${trades.length} items (${tradeSymbols})`
-    : `[3. TASK CHECK] 📋 No trading opportunities found in this cycle`;
-  
-  await logPhase(botConfigId, 'TASK_CHECK', logMsg);
+  if (trades.length === 0 && (!aiOutput.close_positions || aiOutput.close_positions.length === 0)) {
+    await logPhase(botConfigId, 'TASK_CHECK', `[STATUS] STANDBY : No immediate actions required.`);
+  }
 
   return { status: 'SUCCESS', aiTasks: aiOutput, candidates };
 }

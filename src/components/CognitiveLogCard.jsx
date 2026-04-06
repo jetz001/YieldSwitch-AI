@@ -109,14 +109,9 @@ export default function CognitiveLogCard({ aiDirectives, onClose }) {
           </div>
         ) : (
           filteredLogs.map((log) => (
-            <div key={log.id} className="space-y-2">
-              <div className="text-[10px] text-slate-600">[{new Date(log.timestamp).toLocaleTimeString()}]</div>
-              <div className="flex gap-3">
-                <span className="text-[10px] font-bold text-teal-500 shrink-0">[{log.step}]</span>
-                <p className="text-xs text-slate-300 leading-relaxed font-thai whitespace-pre-wrap">
-                  {log.content}
-                </p>
-              </div>
+            <div key={log.id} className="text-xs text-slate-300 font-thai leading-relaxed whitespace-pre-wrap">
+              <span className="text-[10px] text-slate-600 mr-2 font-mono">[{new Date(log.timestamp).toLocaleTimeString('th-TH', { hour12: false })}]</span>
+              {log.content}
             </div>
           ))
         )}

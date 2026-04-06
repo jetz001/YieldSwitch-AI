@@ -19,11 +19,8 @@ export async function GET(_req) {
       return NextResponse.json({ error: 'No BotConfig found' }, { status: 404 });
     }
 
-    const logs = await prisma.aILogStream.findMany({
-      where: { botConfigId: config.id },
-      orderBy: { timestamp: 'desc' },
-      take: 50
-    });
+// Check global transient logs for Zero Logging capability
+    const logs = global.aiTransientLogs?.get(config.id) || [];
 
     return NextResponse.json(logs);
   } catch (error) {

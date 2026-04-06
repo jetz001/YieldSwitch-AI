@@ -76,6 +76,59 @@ export async function getContext(botConfigId, marketType) {
     } else if (String(marketType || '').toUpperCase() === 'SPOT') {
       const openOrdersRaw = await bitgetClient.fetchOpenOrders().catch(() => []);
       openCount = (openOrdersRaw || []).length;
+      openOrdersForAI = (openOrdersRaw || []).slice(0, 6).map(o => ({
+        symbol: o.symbol,
+        side: String(o.side).toUpperCase(),
+        price: o.price
+      }));
+
+      // Fetch Spot balances
+      const balance = await bitgetClient.fetchBalance({ type: 'spot' }).catch(() => ({}));
+      const tickers = await bitgetClient.fetchTickers().catch(() => ({}));
+      
+      const freeTokens = Object.keys(balance.free || {}).filter(coin => 
+        coin !== 'USDT' && coin !== 'USDC' && coin !== 'BGB' &&
+        parseFloat(balance.free[coin]) > 0
+      );
+
+      // Fetch Bot History for Cost Basis
+      const openTranches = await prisma.activeTranche.findMany({
+        where: { botConfigId, status: 'OPEN' }
+      });
+
+      for (const coin of freeTokens) {
+        const amount = parseFloat(balance.free[coin]);
+        let symbol = `${coin}/USDT`;
+        const ticker = tickers[symbol];
+        
+        if (ticker && ticker.last) {
+          const valueUsdt = amount * ticker.last;
+          if (valueUsdt >= 2) { // Exclude dust
+            // Find cost basis
+            const history = openTranches.filter(t => t.symbol === symbol || t.symbol === coin || t.symbol.startsWith(`${coin}/`));
+            let entryPrice = 0;
+            let pnlPercent = 0;
+            
+            if (history.length > 0) {
+              const totalCost = history.reduce((sum, t) => sum + (Number(t.entryPrice) * Number(t.contracts)), 0);
+              const totalAmount = history.reduce((sum, t) => sum + Number(t.contracts), 0);
+              if (totalAmount > 0) {
+                entryPrice = totalCost / totalAmount;
+                pnlPercent = ((ticker.last - entryPrice) / entryPrice) * 100;
+              }
+            }
+
+            activePositionsForAI.push({
+              symbol: symbol,
+              side: 'LONG', // Spot is always long
+              entry: Number(entryPrice.toFixed(5)),
+              notional: Number(valueUsdt.toFixed(2)),
+              pnl: Number(pnlPercent.toFixed(2)),
+              coinAmount: amount
+            });
+          }
+        }
+      }
     }
   } catch (e) {
     activePositionsForAI = [];
@@ -242,6 +295,9 @@ export function cleanJson(str) {
   return s;
 }
 
+// Transient Storage - Zero Logging Mechanism
+global.aiTransientLogs = global.aiTransientLogs || new Map();
+
 export async function logPhase(botConfigId, step, content) {
   try {
     // Safe truncation for console log to avoid breaking multi-byte characters (like Thai)
@@ -251,17 +307,28 @@ export async function logPhase(botConfigId, step, content) {
     };
     
     console.log(`[AI Log] ${step}: ${safeTruncate(content, 80)}`);
-    await prisma.aILogStream.create({
-      data: {
-        id: randomUUID(),
-        botConfigId,
-        step,
-        content,
-        status: 'SUCCESS'
-      }
+    
+    // Zero Logging: Store in Memory Only (Transient Only)
+    if (!global.aiTransientLogs.has(botConfigId)) {
+      global.aiTransientLogs.set(botConfigId, []);
+    }
+    const logArray = global.aiTransientLogs.get(botConfigId);
+    
+    logArray.unshift({
+      id: randomUUID(),
+      botConfigId,
+      step,
+      content,
+      timestamp: new Date().toISOString(),
+      status: 'SUCCESS'
     });
+    
+    // No Bloat: Keep Max 50 items
+    if (logArray.length > 50) {
+      logArray.pop();
+    }
   } catch (err) {
-    console.error(`[AI Log Error] Failed to write to DB:`, err.message);
+    console.error(`[AI Log Error] Failed to write transient log:`, err.message);
   }
 }
 

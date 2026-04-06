@@ -50,9 +50,9 @@ export async function POST(req) {
       try {
         const ai = getLLMClient(user.aiApiKey, user.aiProvider, user.aiModel, true);
         if (ai.provider === 'GEMINI') {
-          const model = ai.client.getGenerativeModel({ model: ai.model });
-          // Minimal check for Gemini
-          if (!model) throw new Error("Could not initialize Gemini model.");
+          // Check for Gemini via the new @google/genai SDK
+          const actualModel = ai.model.startsWith('models/') ? ai.model.split('/')[1] : ai.model;
+          await ai.client.models.get({ model: actualModel });
         } else {
           // Minimal check for OpenAI/OpenRouter (fetch models)
           await ai.client.models.list();

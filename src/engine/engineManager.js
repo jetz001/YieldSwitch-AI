@@ -76,9 +76,17 @@ export async function startEngine(botConfigId) {
             }
 
             const totalEquity = walletEquity + unrealizedPnlTotal;
-            await logPhase(botConfigId, 'TASK_CHECK', `[Engine Guard] Equity: ${totalEquity.toFixed(2)} (Cash: ${walletEquity.toFixed(2)}, PNL: ${unrealizedPnlTotal.toFixed(2)})`);
+            await logPhase(botConfigId, 'TASK_CHECK', `[STATUS] PORTFOLIO : Equity: $${totalEquity.toFixed(2)} (Cash: $${walletEquity.toFixed(2)}, PNL: $${unrealizedPnlTotal.toFixed(2)})`);
 
-            const marketType = config.marketType || 'MIXED';
+            const extractMarketTypeFromDirectives = (directives) => {
+              const text = String(directives || '');
+              const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
+              if (marker?.[1]) return marker[1].toUpperCase();
+              const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
+              if (alt?.[1]) return alt[1].toUpperCase();
+              return null;
+            };
+            const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
             const triggered = await checkZeroBalance(exchangeClient, botConfigId, config, walletEquity, unrealizedPnlTotal, marketType);
             if (triggered) {
               activeLoops.delete(botConfigId);
@@ -134,9 +142,9 @@ export async function startEngine(botConfigId) {
                   } catch (e) {}
                 }
                 if (cancelled) {
-                  await logPhase(botConfigId, 'TRIGGER', `🧠 AI Cancel Order: ${orderId} (เหตุผล: ${ord.reason || '-'})`);
+                  await logPhase(botConfigId, 'TRIGGER', `[ACTION] Cancel Order: ${orderId} : ${ord.reason || 'AI Decision'}`);
                 } else {
-                  await logPhase(botConfigId, 'TRIGGER', `⚠️ AI Cancel Order Failed: ${orderId} (เหตุผล: ${ord.reason || '-'})`);
+                  await logPhase(botConfigId, 'TRIGGER', `[ACTION] Cancel Order Failed: ${orderId} : ${ord.reason || '-'}`);
                 }
               }
             }
@@ -174,9 +182,15 @@ export async function startEngine(botConfigId) {
                 if (cleanCloseSymbol.endsWith(':SELL')) cleanCloseSymbol = cleanCloseSymbol.replace(':SELL', ':USDT');
                 if (cleanCloseSymbol.endsWith(':BUY')) cleanCloseSymbol = cleanCloseSymbol.replace(':BUY', ':USDT');
 
-                let closed = await closePositionBySymbol(bitgetFutures, botConfigId, cleanCloseSymbol, closeSide, safeReason);
-                if (!closed) {
-                  closed = await closePositionBySymbol(bitgetSpot, botConfigId, closeSymbol, closeSide, safeReason);
+                if (marketType === 'SPOT') {
+                  await closePositionBySymbol(bitgetSpot, botConfigId, closeSymbol, closeSide, safeReason);
+                } else if (marketType === 'FUTURES') {
+                  await closePositionBySymbol(bitgetFutures, botConfigId, cleanCloseSymbol, closeSide, safeReason);
+                } else {
+                  let closed = await closePositionBySymbol(bitgetFutures, botConfigId, cleanCloseSymbol, closeSide, safeReason);
+                  if (!closed) {
+                    await closePositionBySymbol(bitgetSpot, botConfigId, closeSymbol, closeSide, safeReason);
+                  }
                 }
               }
             }
@@ -270,20 +284,8 @@ export function stopEngine(botConfigId) {
 
 async function pruneFlashData(botConfigId) {
   try {
-    // 1. Prune Logs (Keep latest 400)
-    const keepLogIds = await prisma.aILogStream.findMany({
-      where: { botConfigId },
-      orderBy: { timestamp: 'desc' },
-      take: 400,
-      select: { id: true }
-    });
-    const keepLogIdSet = new Set(keepLogIds.map(x => x.id));
-    await prisma.aILogStream.deleteMany({
-      where: {
-        botConfigId,
-        ...(keepLogIdSet.size > 0 ? { id: { notIn: Array.from(keepLogIdSet) } } : {})
-      }
-    });
+    // Note: AI Thought Console logs are now zero-logging and transient in memory.
+    // We no longer query or prune aILogStream from DB.
 
     // 2. Prune Trade History (Keep latest 1,000 CLOSED/CANCELLED tranches)
     // We only prune closed/cancelled to avoid deleting active positions.

@@ -2,7 +2,7 @@ import { runCognitiveLoop } from './aiCognitiveDualLoop.js';
 import { checkZeroBalance } from './guards/balanceGuard.js';
 import { executeStrategy, closePositionBySymbol } from './executionGuard.js';
 import { checkGlobalCircuitBreaker } from './mathGuard.js';
-import { getBitgetClient, getExchangeClient } from '../services/exchangeFactory.js';
+import { getExchangeClient } from '../services/exchangeFactory.js';
 import { prisma } from '../lib/db.js';
 import { logPhase } from './aiBase.js';
 
@@ -165,6 +165,51 @@ export async function startEngine(botConfigId) {
 
             // Close positions first to free Futures capital when AI wants to rotate positions
             if (cycleResult.aiTasks?.close_positions && cycleResult.aiTasks.close_positions.length > 0) {
+              const extractMarketTypeFromDirectives = (directives) => {
+                const text = String(directives || '');
+                const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
+                if (marker?.[1]) return marker[1].toUpperCase();
+                const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
+                if (alt?.[1]) return alt[1].toUpperCase();
+                return null;
+              };
+              const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
+
+              const normalizeBasePair = (sym) => {
+                const s = String(sym || '').trim().toUpperCase();
+                if (!s) return '';
+                const noPipe = s.includes('|') ? s.split('|')[0] : s;
+                const noSpace = noPipe.split(/\s+/)[0];
+                const noDirective = noSpace
+                  .replace(/:SHORT$/i, '')
+                  .replace(/:LONG$/i, '')
+                  .replace(/:SELL$/i, '')
+                  .replace(/:BUY$/i, '');
+                return noDirective.split(':')[0];
+              };
+
+              let futuresOpenBasePairs = null;
+              let spotHeldCoins = null;
+
+              if (marketType === 'FUTURES' || marketType === 'MIXED') {
+                const positions = await engineClientFutures.fetchPositions().catch(() => []);
+                futuresOpenBasePairs = new Set(
+                  (positions || [])
+                    .filter(p => Number(p?.contracts || 0) > 0)
+                    .map(p => normalizeBasePair(p.symbol))
+                    .filter(Boolean)
+                );
+              }
+
+              if (marketType === 'SPOT' || marketType === 'MIXED') {
+                const bal = await engineClientSpot.fetchBalance({ type: 'spot' }).catch(() => ({}));
+                spotHeldCoins = new Set(
+                  Object.keys(bal?.free || {})
+                    .filter(c => Number(bal.free[c]) > 0)
+                    .map(c => String(c).toUpperCase())
+                );
+              }
+
               for (const posToClose of cycleResult.aiTasks.close_positions) {
                 const raw =
                   typeof posToClose === 'string'
@@ -174,14 +219,22 @@ export async function startEngine(botConfigId) {
                 const closeSymbol = rawParts[0];
                 if (!closeSymbol) continue;
 
-                // Hallucination Guard: Verify if the coin is actually in our active positions
-                const baseCoin = closeSymbol.split('/')[0].toUpperCase();
-                const posExists = (cycleResult.activePositionsForAI || []).some(p => 
-                  p.symbol === closeSymbol || p.symbol.startsWith(baseCoin)
-                );
+                const closeBasePair = normalizeBasePair(closeSymbol);
+                const closeCoin = closeBasePair ? closeBasePair.split('/')[0] : String(closeSymbol).split('/')[0].toUpperCase();
+                const posExists =
+                  marketType === 'FUTURES'
+                    ? !!(closeBasePair && futuresOpenBasePairs?.has(closeBasePair))
+                    : marketType === 'SPOT'
+                      ? !!(closeCoin && spotHeldCoins?.has(closeCoin))
+                      : !!(
+                          (closeBasePair && futuresOpenBasePairs?.has(closeBasePair)) ||
+                          (closeCoin && spotHeldCoins?.has(closeCoin))
+                        );
 
                 if (!posExists) {
-                  console.warn(`[Engine] 👻 AI Ghost Trade Blocked: AI tried to close ${closeSymbol} but it is not in active positions.`);
+                  const ghostMsg = `[GUARD] 👻 AI Ghost Trade Blocked: AI tried to close ${closeSymbol} but it is not in active positions.`;
+                  console.warn(`[Engine] ${ghostMsg}`);
+                  await logPhase(botConfigId, 'TASK_CHECK', ghostMsg);
                   continue;
                 }
 
@@ -207,16 +260,6 @@ export async function startEngine(botConfigId) {
                 if (cleanCloseSymbol.endsWith(':LONG')) cleanCloseSymbol = cleanCloseSymbol.replace(':LONG', ':USDT');
                 if (cleanCloseSymbol.endsWith(':SELL')) cleanCloseSymbol = cleanCloseSymbol.replace(':SELL', ':USDT');
                 if (cleanCloseSymbol.endsWith(':BUY')) cleanCloseSymbol = cleanCloseSymbol.replace(':BUY', ':USDT');
-
-                const extractMarketTypeFromDirectives = (directives) => {
-                  const text = String(directives || '');
-                  const marker = text.match(/\[\[\s*MARKET_TYPE\s*=\s*(SPOT|FUTURES|MIXED)\s*\]\]/i);
-                  if (marker?.[1]) return marker[1].toUpperCase();
-                  const alt = text.match(/MARKET_TYPE\s*[:=]\s*(SPOT|FUTURES|MIXED)/i);
-                  if (alt?.[1]) return alt[1].toUpperCase();
-                  return null;
-                };
-                const marketType = extractMarketTypeFromDirectives(config.aiDirectives) || config.marketType || 'MIXED';
 
                 if (marketType === 'SPOT') {
                   await closePositionBySymbol(engineClientSpot, botConfigId, closeSymbol, closeSide, safeReason);

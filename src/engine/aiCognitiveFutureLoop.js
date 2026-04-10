@@ -1,6 +1,5 @@
-import { getContext, callLLM, cleanJson, logPhase, formatTradeDetails, formatReasoningInfo } from './aiBase.js';
+import { getContext, callLLM, cleanJson, logPhase } from './aiBase.js';
 import { getExchangeClients } from './engineManager.js';
-import { getBitgetClient, getExchangeClient } from '../services/exchangeFactory.js';
 
 export async function runCognitiveFutureLoop(botConfigId) {
   const context = await getContext(botConfigId, 'FUTURES');
@@ -15,7 +14,10 @@ export async function runCognitiveFutureLoop(botConfigId) {
   );
 
   const rules = `คุณคือ AI Crypto Analyst ที่ทำงานแบบ Real-time Stream เท่านั้น (Zero Logging - Transient Only).
-JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[],close_positions[],cancel_orders[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" or "sell" only. buy=LONG sell=SHORT. amount is USDT value (MIN 5 USDT). Max trades=${bulletsAvailable}. Review active_positions + open_orders. You MUST manage existing positions: decide HOLD vs CLOSE to take profit or cut loss. Use close_positions even if no new trades. Futures usage <=50%. close_positions items must include {symbol,side,reason} (LONG/SHORT). cancel_orders items must include {id,reason}. Add optional key position_review(string). 
+JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[],close_positions[],cancel_orders[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" or "sell" only. buy=LONG sell=SHORT. amount is USDT value (MIN 5 USDT). Max trades=${bulletsAvailable}. Review active_positions + open_orders. 
+[STRICT RULE] close_positions MUST ONLY contain symbols currently found in active_positions. Use EXACT symbol names from active_positions. DO NOT hallucinate.
+[STRICT RULE] If active_positions is empty, you MUST set close_positions to [].
+You MUST manage existing positions: decide HOLD vs CLOSE to take profit or cut loss. Use close_positions even if no new trades. Futures usage <=50%. close_positions items must include {symbol,side,reason} (LONG/SHORT). cancel_orders items must include {id,reason}. Add optional key position_review(string). 
 Use Crypto Decision Tree (DT-IDs) for logic:
 BULLISH: DT-BULL-01 (Strong Momentum/Breakout -> LONG), DT-BULL-02 (Healthy Pullback -> LONG), DT-BULL-03 (Strong Trend -> HOLD/Run Profit).
 BEARISH: DT-BEAR-01 (Dead Cat Bounce -> SHORT), DT-BEAR-02 (Support Breakdown -> EXIT/SHORT), DT-BEAR-03 (Oversold -> WAIT/HOLD).
@@ -71,11 +73,30 @@ reasoning: Plain English or Thai summary (max 20 words, must be punchy like: 'BT
   }
 
   const safeTrades = Array.isArray(aiOutput?.trades) ? aiOutput.trades : [];
-  const safeConfidence = Number.isFinite(Number(aiOutput?.confidence)) ? Number(aiOutput.confidence) : 0;
-  const safeStrategy =
-    typeof aiOutput?.strategy === 'string' && aiOutput.strategy.trim().length > 0
-      ? aiOutput.strategy.trim()
-      : (safeTrades.length > 0 ? 'DIRECTIONAL' : 'NO_TRADE');
+
+  const normalizeBasePair = (sym) => {
+    const s = String(sym || '').trim().toUpperCase();
+    if (!s) return '';
+    const noPipe = s.includes('|') ? s.split('|')[0] : s;
+    const noSpace = noPipe.split(/\s+/)[0];
+    const noDirective = noSpace
+      .replace(/:SHORT$/i, '')
+      .replace(/:LONG$/i, '')
+      .replace(/:SELL$/i, '')
+      .replace(/:BUY$/i, '');
+    return noDirective.split(':')[0];
+  };
+
+  const activeBasePairs = new Set((activePositionsForAI || []).map(p => normalizeBasePair(p.symbol)).filter(Boolean));
+  const rawClose = Array.isArray(aiOutput?.close_positions) ? aiOutput.close_positions : [];
+  const sanitizedClose = rawClose.filter(item => {
+    const sym = typeof item === 'string' ? item : item?.symbol;
+    const basePair = normalizeBasePair(sym);
+    return !!(basePair && activeBasePairs.has(basePair));
+  });
+  if (rawClose.length !== sanitizedClose.length) {
+    aiOutput.close_positions = sanitizedClose;
+  }
 
   const preflightFuturesTrades = async (trades) => {
     const { futures } = await getExchangeClients(botConfigId);
@@ -171,8 +192,6 @@ reasoning: Plain English or Thai summary (max 20 words, must be punchy like: 'BT
 
   const preflight = await preflightFuturesTrades(safeTrades);
   aiOutput.trades = preflight.trades;
-
-  const implementDetails = formatTradeDetails(aiOutput.trades || [], candidates, 'FUTURES');
 
   if (aiOutput.trades?.length > 0) {
     aiOutput.trades.forEach(t => {

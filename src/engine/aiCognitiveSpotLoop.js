@@ -1,4 +1,4 @@
-import { getContext, callLLM, cleanJson, logPhase, formatTradeDetails, formatReasoningInfo } from './aiBase.js';
+import { getContext, callLLM, cleanJson, logPhase } from './aiBase.js';
 
 export async function runCognitiveSpotLoop(botConfigId) {
   const context = await getContext(botConfigId, 'SPOT');
@@ -14,7 +14,9 @@ export async function runCognitiveSpotLoop(botConfigId) {
 
   const rules = `คุณคือ AI Crypto Analyst ที่ทำงานแบบ Real-time Stream เท่านั้น (Zero Logging - Transient Only).
 JSON only. Always include keys: strategy(string),confidence(0-100),reasoning,trades[],close_positions[]. trades items must include {symbol,side,amount,stopLossPercent}. side must be "buy" only. amount is USDT value. Max trades=${bulletsAvailable}. 
-Review active_positions (your current Spot wallet assets). You MUST manage existing positions: decide HOLD vs CLOSE to take profit or cut loss. Use close_positions even if no new trades. close_positions items must include {symbol,side,reason} (side should be "sell" for Spot). CRITICAL: close_positions MUST ONLY contain symbols currently found in active_positions. DO NOT hallucinate or close symbols from the candidates array. Add optional key position_review(string).
+Review active_positions (your current Spot wallet assets). 
+[STRICT RULE] close_positions MUST ONLY contain symbols currently found in active_positions. DO NOT hallucinate or close symbols from the candidates array. Use EXACT symbol names from active_positions.
+You MUST manage existing positions: decide HOLD vs CLOSE to take profit or cut loss. Use close_positions even if no new trades. close_positions items must include {symbol,side,reason} (side should be "sell" for Spot). Add optional key position_review(string).
 Use Crypto Decision Tree (DT-IDs) for logic:
 BULLISH: DT-BULL-01 (Strong Momentum/Breakout -> BUY+), DT-BULL-02 (Healthy Pullback -> BUY+), DT-BULL-03 (Strong Trend -> HOLD/Run Profit).
 BEARISH: DT-BEAR-03 (Oversold -> WAIT).
@@ -61,13 +63,24 @@ reasoning: Plain English or Thai summary (max 20 words, must be punchy like: 'BT
   }
 
   const safeTrades = Array.isArray(aiOutput?.trades) ? aiOutput.trades : [];
-  const safeConfidence = Number.isFinite(Number(aiOutput?.confidence)) ? Number(aiOutput.confidence) : 0;
-  const safeStrategy =
-    typeof aiOutput?.strategy === 'string' && aiOutput.strategy.trim().length > 0
-      ? aiOutput.strategy.trim()
-      : (safeTrades.length > 0 ? 'DIRECTIONAL' : 'NO_TRADE');
 
-  const implementDetails = formatTradeDetails(aiOutput.trades || [], candidates, 'SPOT');
+  const normalizeSpotSymbol = (sym) => {
+    const s = String(sym || '').trim().toUpperCase();
+    if (!s) return '';
+    const noPipe = s.includes('|') ? s.split('|')[0] : s;
+    const noSpace = noPipe.split(/\s+/)[0];
+    return noSpace.split(':')[0];
+  };
+  const activeSymbols = new Set((context.activePositionsForAI || []).map(p => normalizeSpotSymbol(p.symbol)).filter(Boolean));
+  const rawClose = Array.isArray(aiOutput?.close_positions) ? aiOutput.close_positions : [];
+  const sanitizedClose = rawClose.filter(item => {
+    const sym = typeof item === 'string' ? item : item?.symbol;
+    const normalized = normalizeSpotSymbol(sym);
+    return !!(normalized && activeSymbols.has(normalized));
+  });
+  if (rawClose.length !== sanitizedClose.length) {
+    aiOutput.close_positions = sanitizedClose;
+  }
 
   if (aiOutput.trades?.length > 0) {
     aiOutput.trades.forEach(t => {

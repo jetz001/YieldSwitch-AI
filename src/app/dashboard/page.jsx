@@ -14,6 +14,7 @@ import FearGreedPanel from '@/components/FearGreedPanel';
 import { motion, AnimatePresence } from 'framer-motion';
 import ShibaMascot from '@/components/ShibaMascot';
 
+
 export default function Dashboard() {
   const [stats, setStats] = useState({
     isAutopilot: false,
@@ -378,13 +379,13 @@ export default function Dashboard() {
         <div className="lg:col-span-2 space-y-8">
           {visiblePanels.chart && (
             <motion.div variants={itemVariants}>
-              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai flex justify-between items-center mb-2 px-1">กราฟราคา <X size={10} className="cursor-pointer" onClick={() => togglePanel('chart')} /></div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-widest font-bold font-thai flex justify-between items-center mb-2 px-1">กราฟราคาแบบเน้นความสูง (Focus View) <X size={10} className="cursor-pointer" onClick={() => togglePanel('chart')} /></div>
               <motion.div {...cardHover} className="bg-[#111827] border border-slate-800 rounded-2xl p-4 relative group shadow-lg overflow-hidden">
                 <div className="flex items-center justify-between mb-4 px-2">
                    <h2 className="text-xl font-bold text-white font-thai flex items-center gap-2"><Activity size={18} className="text-teal-500" /> Market Chart: <span className="text-teal-400 font-mono">{selectedSymbol.split(':')[1] || selectedSymbol}</span></h2>
                 </div>
                 <div className="rounded-xl overflow-hidden border border-slate-800 bg-[#0b1121]">
-                  <TradingViewChart symbol={selectedSymbol} height={600} />
+                  <TradingViewChart symbol={selectedSymbol} height={900} />
                 </div>
               </motion.div>
             </motion.div>

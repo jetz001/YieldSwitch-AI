@@ -1,5 +1,4 @@
 import { prisma } from '../lib/db.js';
-import { randomUUID } from 'crypto';
 import { getLLMClient } from '../services/llmProvider.js';
 import { getBitgetClient, getExchangeClient } from '../services/exchangeFactory.js';
 import { getExchangeClients } from './engineManager.js';
@@ -315,7 +314,7 @@ export async function logPhase(botConfigId, step, content) {
     const logArray = global.aiTransientLogs.get(botConfigId);
     
     logArray.unshift({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       botConfigId,
       step,
       content,

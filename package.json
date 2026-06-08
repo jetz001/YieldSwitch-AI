@@ -11,15 +11,11 @@
   },
   "dependencies": {
     "@auth/firebase-adapter": "^2.11.2",
-    "@auth/prisma-adapter": "^2.11.1",
     "@cloudflare/next-on-pages": "^1.13.16",
     "@google/genai": "^1.46.0",
-    "@prisma/client": "^6.19.2",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@tailwindcss/postcss": "^4.2.2",
-    "bcryptjs": "^3.0.3",
-    "ccxt": "^4.5.44",
     "clsx": "^2.1.1",
     "decimal.js": "^10.6.0",
     "firebase": "^12.14.0",
@@ -45,7 +41,6 @@
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.1",
     "postcss": "^8.5.8",
-    "prisma": "^6.19.2",
     "tailwindcss": "^4.2.2"
   },
   "prisma": {

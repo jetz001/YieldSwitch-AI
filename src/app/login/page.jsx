@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Shield, Lock, Users, Fingerprint, Loader2 } from 'lucide-react';
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
@@ -28,7 +28,7 @@ export default function LoginPage() {
         redirect: false,
       });
 
-      if (result.error) {
+      if (result?.error) {
         setError('อีเมลหรือรหัสผ่านไม่ถูกต้อง');
       } else {
         router.push(callbackUrl);
@@ -147,5 +147,13 @@ export default function LoginPage() {
         สงวนสิทธิ์การเข้าถึงสำหรับผู้ใช้ที่ได้รับอนุญาต • ระบบเฝ้าระวัง: ทำงานปกติ
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#070b14] flex items-center justify-center text-teal-500"><Loader2 className="animate-spin" size={32} /></div>}>
+      <LoginContent />
+    </Suspense>
   );
 }

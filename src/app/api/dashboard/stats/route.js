@@ -1,7 +1,6 @@
 export const runtime = 'edge';
 import { prisma } from '@/lib/db';
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { auth } from '@/auth';
 import { NextResponse } from 'next/server';
 import { initEngine, getExchangeClients } from '@/engine/engineManager';
 
@@ -17,7 +16,7 @@ export async function GET(_req) {
     engineInitialized = true;
   }
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     if (!session || !session.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

@@ -1,13 +1,13 @@
 export const runtime = 'edge';
 import { PrismaClient } from '@/lib/db';
-import { getServerSession } from "next-auth/next";
+import { auth } from '@/auth';
 import { NextResponse } from 'next/server';
 
 const prisma = new PrismaClient();
 
 export async function PATCH(req, { params }) {
   try {
-    const session = await getServerSession();
+    const session = await auth();
     
     if (!session || !session.user || session.user.email !== 'super_admin@yieldswitch.ai') {
       return NextResponse.json({ error: 'Unauthorized. Admin access required.' }, { status: 401 });

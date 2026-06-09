@@ -1,7 +1,6 @@
 export const runtime = 'edge';
 import { PrismaClient } from '@/lib/db';
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
+import { auth } from '@/auth';
 import { NextResponse } from 'next/server';
 import { sanitizeInput } from '@/utils/security';
 
@@ -9,7 +8,7 @@ const prisma = new PrismaClient();
 
 export async function GET(_req) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -61,7 +60,7 @@ export async function GET(_req) {
 
 export async function POST(req) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -120,7 +119,7 @@ export async function POST(req) {
 
 export async function DELETE(_req) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

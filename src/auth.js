@@ -1,7 +1,7 @@
 import NextAuth from "next-auth"
 import CredentialsProvider from "next-auth/providers/credentials"
 import { db } from "@/lib/firebase"
-import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore"
+import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore/lite"
 
 async function hashPassword(password) {
   const msgUint8 = new TextEncoder().encode(password);

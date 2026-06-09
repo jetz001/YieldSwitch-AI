@@ -1,5 +1,5 @@
 import { db } from './firebase';
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, orderBy } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where, limit, orderBy } from 'firebase/firestore/lite';
 
 // A lightweight Firebase-backed Prisma mock to ensure edge compatibility
 const createPrismaModelMock = (modelName) => {

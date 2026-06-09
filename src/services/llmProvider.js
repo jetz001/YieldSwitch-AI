@@ -1,10 +1,5 @@
-import OpenAI from 'openai';
-import { GoogleGenAI } from '@google/genai';
 import { decrypt } from '../utils/crypto.js';
 
-/**
- * Initializes an LLM client with the user's decrypted API key
- */
 export function getLLMClient(apiKey, provider = 'OPENAI', model = 'gpt-4o', shouldDecrypt = false) {
   const normProvider = (provider || 'OPENAI').trim().toUpperCase();
 
@@ -19,14 +14,11 @@ export function getLLMClient(apiKey, provider = 'OPENAI', model = 'gpt-4o', shou
     throw new Error("AI API Key could not be processed.");
   }
 
-  // Alignment Safety: Ensure model is compatible with provider
   let finalModel = model;
   const isGemini = normProvider === 'GEMINI' || normProvider === 'GOOGLE';
 
   if (isGemini) {
     const m = model.toLowerCase();
-    
-    // Explicit Mapping to Stable IDs (Avoiding 404-prone preview IDs)
     if (m.includes('gemma')) {
       if (m.includes('27b')) finalModel = 'gemma-3-27b-it';
       else if (m.includes('12b')) finalModel = 'gemma-3-12b-it';
@@ -45,33 +37,29 @@ export function getLLMClient(apiKey, provider = 'OPENAI', model = 'gpt-4o', shou
     } else if (m.includes('3.1-flash-lite')) {
       finalModel = 'gemini-3.1-flash-lite-latest';
     } else {
-      // Direct pass for any other specific models, or fallback to 1.5-flash
       finalModel = model.startsWith('models/') ? model.replace('models/', '') : model;
     }
     
-    const client = new GoogleGenAI({ apiKey: decryptedKey });
-    const fullModelName = finalModel.startsWith('models/') ? finalModel : `models/${finalModel}`;
-    return { client, model: fullModelName, provider: 'GEMINI' };
+    return { apiKey: decryptedKey, model: finalModel, provider: 'GEMINI' };
   }
 
   if (normProvider !== 'GEMINI' && (model.startsWith('gemini-') || model.startsWith('models/gemini-'))) {
     finalModel = (normProvider === 'OPENROUTER' || normProvider === 'GROQ') ? 'moonshotai/kimi-2.5' : 'gpt-4o';
   }
 
-  // Handle OpenAI-compatible clients (OpenAI, OpenRouter)
-  const config = {
-    apiKey: decryptedKey,
+  let baseURL = 'https://api.openai.com/v1';
+  let headers = {
+    'Authorization': `Bearer ${decryptedKey}`,
+    'Content-Type': 'application/json'
   };
 
-  if (provider === 'OPENROUTER') {
-    config.baseURL = "https://openrouter.ai/api/v1";
-    config.defaultHeaders = {
-      "HTTP-Referer": "https://yieldswitch.ai", // Required by OpenRouter
-      "X-Title": "YieldSwitch AI",
-    };
+  if (normProvider === 'OPENROUTER') {
+    baseURL = 'https://openrouter.ai/api/v1';
+    headers['HTTP-Referer'] = 'https://yieldswitch.ai';
+    headers['X-Title'] = 'YieldSwitch AI';
+  } else if (normProvider === 'GROQ') {
+    baseURL = 'https://api.groq.com/openai/v1';
   }
 
-  const client = new OpenAI(config);
-  
-  return { client, model: finalModel, provider };
+  return { apiKey: decryptedKey, model: finalModel, provider: normProvider, baseURL, headers };
 }

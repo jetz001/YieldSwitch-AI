@@ -168,89 +168,88 @@ export async function getContext(botConfigId, marketType) {
 }
 
 export async function callLLM(llmInfo, rules, contextPayload) {
-  const { client, model, provider } = llmInfo;
+  const { apiKey, model, provider, baseURL, headers } = llmInfo;
   const normAiProvider = (provider || 'OPENAI').trim().toUpperCase();
 
   if (normAiProvider === 'GEMINI') {
-    const isGemma = model.toLowerCase().includes('gemma');
-    
-    // ดึงรหัส Model จาก API Vault มาใช้ตรงๆโดยไม่บังคับ Lock แล้ว
     const actualModel = model.replace('models/', '');
-    
     console.log(`[callLLM] Calling Gemini API directly with model: ${actualModel}`);
     
-    // Determine if we should use systemInstruction or merge into prompt
-    // Gemma 1B/27B and some older models do not support developer_instruction
-    const supportsSystemInstruction = !isGemma;
+    const isGemma = model.toLowerCase().includes('gemma');
+    let finalRules = rules;
+    
+    if (isGemma) {
+      finalRules += "\n\nCRITICAL FORMATTING RULES:\n1. Output ONLY valid JSON.\n2. NO preamble or explanations.\n3. reasoning MUST BE PLAIN TEXT.\n4. STRICT RULE: ONLY close positions listed in 'active_positions'. DO NOT close or sell coins you do not own.\n5. IF 'active_positions' IS EMPTY, YOU MUST SET 'close_positions': [].\n6. IF 'open_orders' IS EMPTY, YOU MUST SET 'cancel_orders': [].\n7. TRADES must be > 5 USDT and satisfy 'min' amount in candidates.\n8. WARNING: DO NOT ECHO INPUT DATA.";
+    }
 
+    const userPrompt = isGemma 
+      ? `TASK: Analyze market data and return NEXT ACTIONS in JSON format.\nRULES:\n${finalRules}\n\nDATA TO ANALYZE:\n${JSON.stringify(contextPayload)}`
+      : `Analyze the following trading environment state and formulate your next actions:\n\n${JSON.stringify(contextPayload)}`;
+
+    const body = {
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+      generationConfig: { maxOutputTokens: 2000 }
+    };
+
+    if (!isGemma) {
+      body.generationConfig.responseMimeType = "application/json";
+      body.systemInstruction = { parts: [{ text: finalRules }] };
+    }
+
+    let fetchResponse;
     try {
-      const configObj = { maxOutputTokens: 2000 };
-      let finalRules = rules;
-      
-      if (!isGemma) {
-        configObj.responseMimeType = "application/json";
-        configObj.systemInstruction = { parts: [{ text: finalRules }] };
-      } else {
-        // Gemma 1B/27B needs extra guidance since JSON mode is off
-        finalRules += "\n\nCRITICAL FORMATTING RULES:\n1. Output ONLY valid JSON.\n2. NO preamble or explanations.\n3. reasoning MUST BE PLAIN TEXT (forbidden chars: double-quotes/colons).\n4. STRICT RULE: ONLY close positions listed in 'active_positions'. DO NOT close or sell coins you do not own.\n5. IF 'active_positions' IS EMPTY, YOU MUST SET 'close_positions': [].\n6. IF 'open_orders' IS EMPTY, YOU MUST SET 'cancel_orders': [].\n7. TRADES must be > 5 USDT and satisfy 'min' amount in candidates.\n8. WARNING: DO NOT ECHO INPUT DATA.";
-      }
-      
-      const userPrompt = isGemma 
-        ? `TASK: Analyze market data and return NEXT ACTIONS in JSON format.\nRULES:\n${finalRules}\n\nDATA TO ANALYZE:\n${JSON.stringify(contextPayload)}`
-        : `Analyze the following trading environment state and formulate your next actions:\n\n${JSON.stringify(contextPayload)}`;
-
-      const response = await client.models.generateContent({
-        model: actualModel,
-        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-        config: configObj
+      fetchResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
       });
       
-      console.log(`[callLLM] Response length: ${response.text?.length || 0}`);
+      const data = await fetchResponse.json();
+      if (!fetchResponse.ok) throw new Error(data.error?.message || `HTTP ${fetchResponse.status}`);
       
-      return response.text;
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error("Invalid Gemini response format");
+      return text;
     } catch (error) {
       console.error(`[callLLM] Error calling Gemini:`, error.message);
       
-      // If we hit the developer instruction error, retry once by merging into prompt
       if (error.message.includes('Developer instruction') || error.message.includes('INVALID_ARGUMENT')) {
         console.log(`[callLLM] Retrying without systemInstruction for ${actualModel}`);
-        try {
-          const retryResponse = await client.models.generateContent({
-            model: actualModel,
-            contents: [{ role: 'user', parts: [{ text: `${rules}\n\nAnalyze this data:\n${JSON.stringify(contextPayload)}` }] }],
-            config: { maxOutputTokens: 2000 }
-          });
-          return retryResponse.text;
-        } catch (retryErr) {
-          console.error(`[callLLM] Retry failed:`, retryErr.message);
-        }
-      }
-
-      if (isGemma || error.message.includes('429') || error.message.includes('Quota')) {
-        console.log(`[callLLM] Global Fallback: trying gemini-2.0-flash-lite`);
-        try {
-          const fallbackResponse = await client.models.generateContent({
-            model: 'gemini-2.0-flash-lite',
-            contents: [{ role: 'user', parts: [{ text: `Analyze the following trading environment state:\n\n${JSON.stringify(contextPayload)}` }] }],
-            config: { maxOutputTokens: 2000, responseMimeType: "application/json", systemInstruction: rules }
-          });
-          return fallbackResponse.text;
-        } catch (fallbackError) {
-          console.error(`[callLLM] Global Fallback also failed:`, fallbackError.message);
-          throw error;
-        }
+        const retryBody = {
+          contents: [{ role: 'user', parts: [{ text: `${rules}\n\nAnalyze this data:\n${JSON.stringify(contextPayload)}` }] }],
+          generationConfig: { maxOutputTokens: 2000 }
+        };
+        const retryRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${actualModel}:generateContent?key=${apiKey}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(retryBody)
+        });
+        const retryData = await retryRes.json();
+        return retryData.candidates?.[0]?.content?.parts?.[0]?.text;
       }
       throw error;
     }
   } else {
-    const completionOptions = {
+    const body = {
       model: model,
-      messages: [{ role: 'system', content: rules }, { role: 'user', content: JSON.stringify(contextPayload) }],
+      messages: [
+        { role: 'system', content: rules }, 
+        { role: 'user', content: JSON.stringify(contextPayload) }
+      ],
       max_tokens: 2000
     };
-    if (normAiProvider !== 'GEMINI') completionOptions.response_format = { type: 'json_object' };
-    const response = await client.chat.completions.create(completionOptions);
-    return response.choices[0].message.content;
+    if (normAiProvider !== 'GEMINI') {
+      body.response_format = { type: 'json_object' };
+    }
+
+    const res = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
+    return data.choices[0].message.content;
   }
 }
 

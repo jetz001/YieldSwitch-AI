@@ -1,4 +1,3 @@
-export const runtime = 'edge';
 import { prisma } from '@/lib/db';
 import { closePositionBySymbol } from '@/engine/executionGuard';
 import { getExchangeClients } from '@/engine/engineManager';

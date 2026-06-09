@@ -1,4 +1,3 @@
-export const runtime = 'edge';
 import { PrismaClient } from '@/lib/db';
 import { auth } from '@/auth';
 import { NextResponse } from 'next/server';
